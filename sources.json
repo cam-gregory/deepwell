@@ -1,0 +1,42 @@
+{
+  "_comment": "Source manifest for Deepwell. PDFs are hosted as assets on the GitHub Release 'sources-v1'; ZIMs pull directly from the Kiwix mirror. fetch_sources.py reads this file, downloads each entry into data/sources/, and verifies sha256. Fill in each sha256 with: python fetch_sources.py --hashes",
+  "pdfs": [
+    {
+      "name": "334749-B_UseSafeWater-OnePager-508.pdf",
+      "url": "https://github.com/cam-gregory/deepwell/releases/download/sources-v1/334749-B_UseSafeWater-OnePager-508.pdf",
+      "sha256": "f7bda1f9e7827ee74278d408001e9cdf4529924fa70144e0696ee0fd4ee39bad"
+    },
+    {
+      "name": "emergency_disinfection_of_drinking_water_sept2017.pdf",
+      "url": "https://github.com/cam-gregory/deepwell/releases/download/sources-v1/emergency_disinfection_of_drinking_water_sept2017.pdf",
+      "sha256": "f404083d00decedc267bf4265eda776bb250ccfe18c1f7b19152aa006ff727c5"
+    },
+    {
+      "name": "Food_Storage.pdf",
+      "url": "https://github.com/cam-gregory/deepwell/releases/download/sources-v1/Food_Storage.pdf",
+      "sha256": "2c4fa9c0fd081849805328654d3f1efd2b6a5448da946dd09245c77dbd16905a"
+    },
+    {
+      "name": "make-water-safe-during-emergency-p.pdf",
+      "url": "https://github.com/cam-gregory/deepwell/releases/download/sources-v1/make-water-safe-during-emergency-p.pdf",
+      "sha256": "c39b55b4d8f3dd40ecd2b13175f7661b52dfc6e73e4a24ef189de64fb9d513b1"
+    },
+    {
+      "name": "SERE_Manual.pdf",
+      "url": "https://github.com/cam-gregory/deepwell/releases/download/sources-v1/SERE_Manual.pdf",
+      "sha256": "da60e15c1f7aedaafbe4a796ca02a3a6b4f510b9b987de3f87c4b8bd621e80d7"
+    },
+    {
+      "name": "water_safety_tips_0.pdf",
+      "url": "https://github.com/cam-gregory/deepwell/releases/download/sources-v1/water_safety_tips_0.pdf",
+      "sha256": "0efb1626f47e844b3e109f0269d565fd0a389d8b82263f7dd72a3625dee188b9"
+    }
+  ],
+  "zims": [
+    {
+      "name": "zimgit-medicine_en_2024-08.zim",
+      "url": "https://download.kiwix.org/zim/other/zimgit-medicine_en_2024-08.zim",
+      "sha256": "a86c31b93e9800aae2cd812ef18cbf9c087a7537784c62fbc259db7f9f9d18c0"
+    }
+  ]
+}
