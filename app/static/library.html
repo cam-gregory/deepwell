@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Library · Deepwell</title>
+  <style>
+    body { margin: 0; font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f6f7f9; color: #1f2937; }
+    .container { max-width: 900px; margin: 0 auto; padding: 60px 24px; }
+    .nav { display: flex; gap: 16px; margin-bottom: 24px; font-size: 14px; }
+    .nav a { color: #6b7280; text-decoration: none; padding: 6px 12px; border-radius: 8px; }
+    .nav a.active { background: #111827; color: white; }
+    h1 { margin-bottom: 8px; }
+    .subtitle { color: #6b7280; margin-bottom: 24px; }
+    .filter { width: 100%; box-sizing: border-box; font-size: 16px; padding: 14px 16px; border: 1px solid #d1d5db; border-radius: 12px; margin-bottom: 20px; }
+    .count { color: #6b7280; font-size: 13px; margin-bottom: 12px; }
+    .doc { display: flex; align-items: center; justify-content: space-between; background: white; padding: 16px 20px; border-radius: 12px; margin-bottom: 10px; border: 1px solid #eceef1; cursor: pointer; transition: box-shadow .12s, transform .12s; }
+    .doc:hover { box-shadow: 0 2px 12px rgba(0,0,0,.06); transform: translateY(-1px); }
+    .doc .title { font-weight: 600; }
+    .doc .desc { color: #374151; font-size: 13px; margin-top: 4px; max-width: 620px; }
+    .doc .meta { color: #6b7280; font-size: 12px; margin-top: 4px; }
+    .doc .icon { font-size: 22px; margin-right: 14px; }
+    .doc .left { display: flex; align-items: flex-start; }
+    .pill { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+    .pill.pdf { background: #e0f2fe; color: #075985; }
+    .pill.zim { background: #ede9fe; color: #5b21b6; }
+    .empty, .error { color: #6b7280; margin-top: 24px; }
+    .error { color: #b91c1c; }
+    .more { text-align: center; margin-top: 16px; }
+    .more button { padding: 10px 20px; border: 1px solid #d1d5db; background: white; border-radius: 10px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="nav">
+      <a href="/">Ask</a>
+      <a href="/library" class="active">Library</a>
+    </div>
+
+    <h1>Library</h1>
+    <div class="subtitle">Browse and open the documents and articles in Deepwell</div>
+
+    <input id="filter" class="filter" type="text" placeholder="Filter by title or description..." />
+    <div id="count" class="count"></div>
+    <div id="list"></div>
+    <div id="more" class="more"></div>
+  </div>
+
+  <script>
+    const PAGE = 200;
+    let offset = 0, total = 0, currentQ = "";
+
+    function fmtSize(b) {
+      if (b == null) return "";
+      if (b < 1024) return b + " B";
+      if (b < 1048576) return (b / 1024).toFixed(0) + " KB";
+      return (b / 1048576).toFixed(1) + " MB";
+    }
+
+    function openDoc(url) { window.open(url, "_blank"); }
+
+    function cardHtml(d) {
+      const icon = d.type === "zim" ? "📘" : "📄";
+      const pill = d.type === "zim"
+        ? '<span class="pill zim">article</span>'
+        : '<span class="pill pdf">PDF</span>';
+      const safe = s => (s || "").replace(/</g, "&lt;");
+      const pages = d.page_count ? `${d.page_count} pages · ` : "";
+      const size = d.size_bytes ? fmtSize(d.size_bytes) : "";
+      const metaBits = [pages + size, d.source].filter(Boolean).join(" · ");
+      const desc = d.description ? `<div class="desc">${safe(d.description)}</div>` : "";
+      return `
+        <div class="doc" onclick='openDoc(${JSON.stringify(d.open_url)})'>
+          <div class="left">
+            <span class="icon">${icon}</span>
+            <div>
+              <div class="title">${safe(d.title)}</div>
+              ${desc}
+              <div class="meta">${safe(metaBits)}</div>
+            </div>
+          </div>
+          ${pill}
+        </div>`;
+    }
+
+    async function fetchPage(reset) {
+      const list = document.getElementById("list");
+      const more = document.getElementById("more");
+      const count = document.getElementById("count");
+      if (reset) { offset = 0; list.innerHTML = ""; }
+
+      try {
+        const url = `/library/list?q=${encodeURIComponent(currentQ)}&limit=${PAGE}&offset=${offset}`;
+        const r = await fetch(url);
+        if (!r.ok) throw new Error(`Request failed: ${r.status}`);
+        const data = await r.json();
+        total = data.count;
+
+        if (total === 0) {
+          list.innerHTML = '<div class="empty">No documents found.</div>';
+          count.textContent = "";
+          more.innerHTML = "";
+          return;
+        }
+
+        list.insertAdjacentHTML("beforeend", data.documents.map(cardHtml).join(""));
+        offset += data.returned;
+        count.textContent = `Showing ${offset} of ${total}`;
+        more.innerHTML = offset < total
+          ? '<button onclick="fetchPage(false)">Load more</button>' : "";
+      } catch (e) {
+        list.innerHTML = `<div class="error">${e.message}</div>`;
+      }
+    }
+
+    let t;
+    document.getElementById("filter").addEventListener("input", e => {
+      clearTimeout(t);
+      t = setTimeout(() => { currentQ = e.target.value.trim(); fetchPage(true); }, 250);
+    });
+
+    fetchPage(true);
+  </script>
+</body>
+</html>

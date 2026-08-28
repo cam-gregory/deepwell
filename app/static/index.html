@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Deepwell</title>
+
+    <style>
+      body {
+        margin: 0;
+        font-family:
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          Roboto,
+          Oxygen,
+          Ubuntu,
+          Cantarell,
+          "Open Sans",
+          "Helvetica Neue",
+          sans-serif;
+        background: #f6f7f9;
+        color: #1f2937;
+      }
+
+      .container {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 60px 24px;
+      }
+
+      h1 {
+        margin-bottom: 8px;
+      }
+
+      .subtitle {
+        color: #6b7280;
+        margin-bottom: 32px;
+      }
+
+      .search-box {
+        display: flex;
+        gap: 12px;
+      }
+
+      input {
+        flex: 1;
+        font-size: 18px;
+        padding: 16px;
+        border: 1px solid #d1d5db;
+        border-radius: 12px;
+      }
+
+      button {
+        padding: 0 24px;
+        border: 0;
+        border-radius: 12px;
+        font-size: 16px;
+        cursor: pointer;
+        background: #111827;
+        color: white;
+      }
+
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .answer {
+        margin-top: 24px;
+        background: white;
+        padding: 28px 32px;
+        border-radius: 14px;
+        line-height: 1.65;
+        display: none;
+      }
+
+      .answer h2 {
+        font-size: 18px;
+        margin: 24px 0 8px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid #eceef1;
+      }
+
+      .answer h3 {
+        font-size: 15px;
+        margin: 18px 0 6px;
+        color: #374151;
+      }
+      .answer h2:first-child,
+      .answer p:first-child {
+        margin-top: 0;
+      }
+      .answer p {
+        margin: 12px 0;
+      }
+      .answer ul,
+      .answer ol {
+        margin: 12px 0;
+        padding-left: 24px;
+      }
+      .answer li {
+        margin: 6px 0;
+      }
+
+      .answer blockquote.callout {
+        margin: 16px 0;
+        padding: 12px 16px;
+        border-radius: 10px;
+        background: #f3f4f6;
+        border-left: 4px solid #9ca3af;
+      }
+
+      .answer blockquote.callout.warning {
+        background: #fef2f2;
+        border-left-color: #dc2626;
+        color: #7f1d1d;
+      }
+
+      .cite {
+        display: inline-block;
+        font-size: 12px;
+        font-weight: 600;
+        background: #eef2ff;
+        color: #3730a3;
+        padding: 1px 8px;
+        border-radius: 999px;
+      }
+
+      .sources {
+        margin-top: 24px;
+        padding-top: 16px;
+        border-top: 1px solid #eceef1;
+      }
+
+      .source {
+        background: #f3f4f6;
+        padding: 12px;
+        margin-top: 8px;
+        border-radius: 8px;
+        font-size: 14px;
+      }
+
+      .timing {
+        margin-top: 16px;
+        padding-top: 12px;
+        border-top: 1px solid #eceef1;
+        color: #6b7280;
+        font-size: 12px;
+      }
+
+      .loading {
+        margin-top: 24px;
+        color: #6b7280;
+        display: none;
+      }
+      .error {
+        margin-top: 24px;
+        color: #b91c1c;
+        display: none;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="container">
+      <div
+        class="nav"
+        style="display: flex; gap: 16px; margin-bottom: 24px; font-size: 14px"
+      >
+        <a
+          href="/"
+          style="
+            background: #111827;
+            color: white;
+            text-decoration: none;
+            padding: 6px 12px;
+            border-radius: 8px;
+          "
+          >Ask</a
+        >
+        <a
+          href="/library"
+          style="
+            color: #6b7280;
+            text-decoration: none;
+            padding: 6px 12px;
+            border-radius: 8px;
+          "
+          >Library</a
+        >
+      </div>
+
+      <h1>Deepwell</h1>
+      <div class="subtitle">
+        Draw from a world of knowledge.
+      </div>
+
+      <div class="search-box">
+        <input id="question" type="text" placeholder="Ask a question..." />
+        <button id="askButton" onclick="askQuestion()">Ask</button>
+      </div>
+
+      <div id="loading" class="loading">Searching knowledge base...</div>
+      <div id="error" class="error"></div>
+
+      <div id="answerBox" class="answer">
+        <div id="answer"></div>
+        <div class="sources">
+          <strong>Sources</strong>
+          <div id="sources"></div>
+        </div>
+        <div id="timing" class="timing"></div>
+      </div>
+    </div>
+
+    <script>
+      // --- Minimal offline Markdown renderer ---
+      function escapeHtml(t) {
+        return t
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+      }
+
+      function renderInline(text) {
+        let out = escapeHtml(text);
+        out = out.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+        out = out.replace(
+          /\[Source\s*(\d+)\]/gi,
+          '<span class="cite">Source $1</span>',
+        );
+        return out;
+      }
+
+      function renderMarkdown(md) {
+        const lines = (md || "").replace(/\r\n/g, "\n").split("\n");
+        let html = "";
+        let listType = null;
+
+        function closeList() {
+          if (listType) {
+            html += `</${listType}>`;
+            listType = null;
+          }
+        }
+
+        for (const raw of lines) {
+          const line = raw.trim();
+          if (line === "") {
+            closeList();
+            continue;
+          }
+          let m;
+          if ((m = line.match(/^#{2,6}\s+(.*)$/))) {
+            closeList();
+            const level = line.startsWith("###") ? "h3" : "h2";
+            html += `<${level}>${renderInline(m[1])}</${level}>`;
+            continue;
+          }
+          if ((m = line.match(/^#\s+(.*)$/))) {
+            closeList();
+            html += `<h2>${renderInline(m[1])}</h2>`;
+            continue;
+          }
+          if ((m = line.match(/^>\s?(.*)$/))) {
+            closeList();
+            const warn = /⚠|warning|caution|danger/i.test(m[1]);
+            html += `<blockquote class="callout ${warn ? "warning" : ""}">${renderInline(m[1])}</blockquote>`;
+            continue;
+          }
+          if ((m = line.match(/^\d+[.)]\s+(.*)$/))) {
+            if (listType !== "ol") {
+              closeList();
+              html += "<ol>";
+              listType = "ol";
+            }
+            html += `<li>${renderInline(m[1])}</li>`;
+            continue;
+          }
+          if ((m = line.match(/^[-*+]\s+(.*)$/))) {
+            if (listType !== "ul") {
+              closeList();
+              html += "<ul>";
+              listType = "ul";
+            }
+            html += `<li>${renderInline(m[1])}</li>`;
+            continue;
+          }
+          closeList();
+          html += `<p>${renderInline(line)}</p>`;
+        }
+        closeList();
+        return html;
+      }
+
+      async function askQuestion() {
+        const question = document.getElementById("question").value.trim();
+        if (!question) return;
+
+        const askButton = document.getElementById("askButton");
+        const loading = document.getElementById("loading");
+        const answerBox = document.getElementById("answerBox");
+        const answer = document.getElementById("answer");
+        const sources = document.getElementById("sources");
+        const error = document.getElementById("error");
+        const timing = document.getElementById("timing");
+
+        // Reset UI
+        askButton.disabled = true;
+        loading.style.display = "block";
+        answerBox.style.display = "none";
+        error.style.display = "none";
+        answer.innerHTML = "";
+        sources.innerHTML = "";
+        timing.textContent = "";
+
+        let answerText = "";
+
+        try {
+          const response = await fetch(
+            `/ask?q=${encodeURIComponent(question)}`,
+          );
+          if (!response.ok || !response.body) {
+            throw new Error(`Request failed: ${response.status}`);
+          }
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop();
+
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              const msg = JSON.parse(line);
+
+              if (msg.type === "sources") {
+                for (const s of msg.sources) {
+                  const el = document.createElement("div");
+                  el.className = "source";
+                  el.textContent = `[Source ${s.id}] ${s.source_file} — pages ${s.page_start}-${s.page_end}`;
+                  sources.appendChild(el);
+                }
+              } else if (msg.type === "token") {
+                answerText += msg.text;
+                answer.innerHTML = renderMarkdown(answerText);
+                answerBox.style.display = "block";
+                loading.style.display = "none";
+              } else if (msg.type === "timings") {
+                const t = msg.timings;
+                const ttft =
+                  t.time_to_first_token == null
+                    ? "–"
+                    : `${t.time_to_first_token}s`;
+                timing.textContent =
+                  `Retrieval ${t.retrieval}s · First token ${ttft} · ` +
+                  `Generation ${t.generation}s · Total ${t.total}s`;
+              } else if (msg.type === "error") {
+                throw new Error(msg.message);
+              }
+            }
+          }
+        } catch (err) {
+          error.textContent = err.message;
+          error.style.display = "block";
+        } finally {
+          loading.style.display = "none";
+          askButton.disabled = false;
+        }
+      }
+
+      document
+        .getElementById("question")
+        .addEventListener("keydown", function (e) {
+          if (e.key === "Enter") askQuestion();
+        });
+    </script>
+  </body>
+</html>

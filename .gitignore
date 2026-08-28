@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Deepwell generated data (rebuilt by the pipeline)
+data/extracted/
+data/chunks/
+data/enriched/
+data/vectorstore/
+data/knowledge.db
+
+# Large source archives (ZIMs are hundreds of MB+)
+data/sources/zim/*.zim
+
+# OS noise
+.DS_Store
