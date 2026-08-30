@@ -1,13 +1,17 @@
 import re
 from pathlib import Path
 from urllib.parse import quote, unquote
+import base64
+import secrets
 
-from fastapi import FastAPI, Query, Response
+from fastapi import FastAPI, File, Form, Query, Response, UploadFile
 from fastapi.responses import StreamingResponse, FileResponse, JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 from app import config
 from app import db
+from app.ingest import start_ingest_job, stream_job
 from app.search import search, search_debug
 from app.answer import answer_question_stream
 
@@ -15,6 +19,41 @@ app = FastAPI(
     title="Deepwell",
     version="0.1.0",
 )
+
+# Paths always reachable without the shared password (load-balancer health checks).
+_AUTH_EXEMPT_PATHS = {"/health"}
+
+def _password_ok(auth_header: str | None) -> bool:
+    """True if the HTTP Basic header carries the configured password (any username)."""
+    if not auth_header or not auth_header.lower().startswith("basic "):
+        return False
+    try:
+        decoded = base64.b64decode(auth_header.split(" ", 1)[1]).decode("utf-8")
+    except Exception:
+        return False
+    _, _, password = decoded.partition(":")
+    return secrets.compare_digest(password, config.AUTH_PASSWORD)
+
+@app.middleware("http")
+async def require_password(request, call_next):
+    """Gate every route behind a shared password when DEEPWELL_PASSWORD is set.
+    No password configured => fully open (local dev behaviour is unchanged)."""
+    if config.AUTH_PASSWORD and request.url.path not in _AUTH_EXEMPT_PATHS:
+        if not _password_ok(request.headers.get("authorization")):
+            return Response(
+                content="Authentication required",
+                status_code=401,
+                headers={"WWW-Authenticate": 'Basic realm="Deepwell"'},
+            )
+    return await call_next(request)
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+class AskRequest(BaseModel):
+    messages: list[ChatMessage] = Field(..., min_length=1)
+    limit: int = Field(5, ge=1, le=20)
 
 # app/static/  ->  index.html, library.html, and any CSS/JS/image assets
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -67,22 +106,24 @@ def debug_search(
 
 @app.get("/debug", response_class=HTMLResponse)
 def debug_page():
-    return FileResponse(STATIC_DIR / "debug.html")
+    return FileResponse(INDEX_HTML)
 
-@app.get("/ask")
-def ask(
-    q: str = Query(..., min_length=1, description="Question to answer"),
-    limit: int = Query(5, ge=1, le=20),
-):
+@app.post("/ask")
+def ask(req: AskRequest):
+    messages = [{"role": m.role, "content": m.content} for m in req.messages]
     return StreamingResponse(
-        answer_question_stream(q, limit),
+        answer_question_stream(messages, req.limit),
         media_type="application/x-ndjson",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 @app.get("/library", response_class=HTMLResponse)
 def library_page():
-    return FileResponse(STATIC_DIR / "library.html")
+    return FileResponse(INDEX_HTML)
+
+@app.get("/add", response_class=HTMLResponse)
+def add_page():
+    return FileResponse(INDEX_HTML)
 
 @app.get("/library/list")
 def library_list(
@@ -104,7 +145,12 @@ def library_list(
             f"""SELECT source_type, source_file, display_title, description,
                        page_count, open_url
                 FROM documents {where}
-                ORDER BY display_title
+                ORDER BY CASE source_type
+                    WHEN 'pdf' THEN 0
+                    WHEN 'zim' THEN 1
+                    WHEN 'web' THEN 2
+                    ELSE 3
+                END, display_title
                 LIMIT ? OFFSET ?""",
             params + [limit, offset],
         ).fetchall()
@@ -131,6 +177,116 @@ def library_list(
         "documents": docs,
     }
 
+@app.post("/ingest/start")
+async def ingest_start(
+    files: list[UploadFile] = File(default=[]),
+    urls: str = Form(default=""),
+    web_link_pattern: str = Form(default=""),
+    download_pdfs: bool = Form(default=False),
+):
+    """Save uploaded PDFs + queue source URLs, then run the ingestion pipeline
+    in the background. URLs are routed by type behind the scenes (.zim archives
+    are downloaded; everything else is crawled as a web index). Returns a
+    job_id to stream progress from."""
+    all_urls = [u.strip() for u in urls.splitlines() if u.strip()]
+    zim_list: list[str] = []
+    web_list: list[str] = []
+    for url in all_urls:
+        if not re.match(r"^https?://", url, re.IGNORECASE):
+            return JSONResponse({"error": f"Not an http(s) URL: {url}"}, status_code=400)
+        if url.lower().split("?", 1)[0].endswith(".zim"):
+            zim_list.append(url)
+        else:
+            web_list.append(url)
+
+    link_pattern = web_link_pattern.strip() or None
+    if link_pattern:
+        try:
+            re.compile(link_pattern)
+        except re.error as exc:
+            return JSONResponse({"error": f"Invalid link pattern regex: {exc}"}, status_code=400)
+
+    saved_pdfs: list[str] = []
+    config.PDF_SOURCE_DIR.mkdir(parents=True, exist_ok=True)
+    for upload in files:
+        name = Path(upload.filename or "").name
+        if not name.lower().endswith(".pdf"):
+            continue
+        dest = (config.PDF_SOURCE_DIR / name).resolve()
+        if config.PDF_SOURCE_DIR.resolve() not in dest.parents:
+            continue
+        dest.write_bytes(await upload.read())
+        saved_pdfs.append(name)
+
+    if not saved_pdfs and not all_urls:
+        return JSONResponse(
+            {"error": "No PDF files or URLs provided"}, status_code=400
+        )
+
+    job_id = start_ingest_job(saved_pdfs, zim_list, web_list, link_pattern, download_pdfs)
+    return {"job_id": job_id}
+
+@app.post("/ingest/preview")
+def ingest_preview(
+    urls: str = Form(default=""),
+    web_link_pattern: str = Form(default=""),
+):
+    """Estimate what the given URLs would add before a full ingest run: web
+    index pages report an estimated page count + disk size; .zim archives
+    report their download size."""
+    all_urls = [u.strip() for u in urls.splitlines() if u.strip()]
+    for url in all_urls:
+        if not re.match(r"^https?://", url, re.IGNORECASE):
+            return JSONResponse({"error": f"Not an http(s) URL: {url}"}, status_code=400)
+    if not all_urls:
+        return JSONResponse({"error": "No URLs provided"}, status_code=400)
+
+    pattern = web_link_pattern.strip() or None
+    if pattern:
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            return JSONResponse({"error": f"Invalid link pattern regex: {exc}"}, status_code=400)
+
+    from ingestion.web_reader import preview_web_index, probe_download_size
+
+    previews = []
+    for url in all_urls:
+        try:
+            if url.lower().split("?", 1)[0].endswith(".zim"):
+                previews.append({
+                    "url": url,
+                    "kind": "zim",
+                    "pages": 0,
+                    "sampled": 0,
+                    "avg_article_bytes": 0,
+                    "estimated_bytes": probe_download_size(url),
+                })
+            else:
+                previews.append(preview_web_index(url, pattern))
+        except Exception as exc:
+            return JSONResponse(
+                {"error": f"Could not preview {url}: {exc}"}, status_code=400
+            )
+
+    return {
+        "previews": previews,
+        "total_pages": sum(p["pages"] for p in previews),
+        "total_estimated_bytes": sum(p["estimated_bytes"] for p in previews),
+    }
+
+@app.get("/ingest/stream/{job_id}")
+def ingest_stream(job_id: str):
+    """NDJSON stream of stage/progress events for a running ingest job."""
+    gen = stream_job(job_id)
+    if gen is None:
+        return JSONResponse({"error": "Unknown or finished job"}, status_code=404)
+    return StreamingResponse(
+        gen,
+        media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
 @app.get("/pdf/{filename}")
 def serve_pdf(filename: str):
     """Serve a single PDF inline (opens in the browser's native viewer)."""
@@ -150,6 +306,18 @@ def serve_pdf(filename: str):
         media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="{safe_name}"'},
     )
+
+@app.get("/web/{filename}")
+def serve_web_snapshot(filename: str):
+    """Serve a locally-saved offline snapshot of a crawled web article."""
+    safe_name = Path(filename).name
+    root = config.WEB_SOURCE_DIR.resolve()
+    path = (root / safe_name).resolve()
+
+    if root not in path.parents or not path.is_file() or path.suffix.lower() != ".html":
+        return JSONResponse({"error": "Not found"}, status_code=404)
+
+    return FileResponse(path, media_type="text/html")
 
 @app.get("/zim/{zim_file}/{article_path:path}")
 def serve_zim_entry(zim_file: str, article_path: str):

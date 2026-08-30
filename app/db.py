@@ -72,10 +72,20 @@ def reset_db() -> None:
         )
     init_db()
 
+_FTS_STOPWORDS = frozenset(
+    """a an and are as at be but by can do does for from how i if in into is it
+    my of on or our so than that the their them then there these they this to
+    was we what when where which who why will with you your""".split()
+)
+
 def fts_match_query(text: str) -> str:
-    """Turn free text into a safe FTS5 MATCH string (OR of quoted tokens)."""
+    """Turn free text into a safe FTS5 MATCH string (OR of quoted tokens).
+    Stopwords and single chars are dropped so common words don't dominate BM25;
+    falls back to all tokens if filtering would leave nothing to match."""
     tokens = re.findall(r"[a-z0-9]+", text.lower())
-    return " OR ".join(f'"{t}"' for t in tokens)
+    meaningful = [t for t in tokens if len(t) > 1 and t not in _FTS_STOPWORDS]
+    chosen = meaningful or tokens
+    return " OR ".join(f'"{t}"' for t in chosen)
 
 # --- Reads used by search + library ---
 

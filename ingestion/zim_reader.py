@@ -91,7 +91,11 @@ def _iter_entries(archive: Archive):
         yield entry, item
 
 def _article_from_entry(entry, item):
-    """Return (title, pages) for a content entry, or None to skip."""
+    """Return (title, pages, kind) for a content entry, or None to skip.
+    kind is "pdf" or "html" — the ZIM's own filename/title for embedded PDFs
+    is often just a generic bucket name (e.g. "First Aid and Medicine (10)"),
+    not the real article title, so callers use it to decide whether to defer
+    to the LLM-generated display_title instead of trusting this title."""
     mimetype = (item.mimetype or "")
     path = entry.path
 
@@ -102,15 +106,15 @@ def _article_from_entry(entry, item):
         pages = _pdf_to_pages(bytes(item.content))
         if not pages:
             return None
-        title = (entry.title or Path(path).stem).replace(".pdf", "")
-        return title, pages
+        title = _clean_title(entry.title, path)
+        return title, pages, "pdf"
 
     if mimetype.startswith("text/html"):
         text = html_to_text(bytes(item.content).decode("utf-8", errors="ignore"))
         if not text.strip() or any(m in text for m in _SHELL_MARKERS):
             return None
-        title = entry.title or path
-        return title, [{"page_number": 1, "text": f"{title}\n\n{text}"}]
+        title = _clean_title(entry.title, path)
+        return title, [{"page_number": 1, "text": f"{title}\n\n{text}"}], "html"
 
     return None  # images, css, js, etc.
 
@@ -141,7 +145,7 @@ def ingest_all_zims(force: bool = False) -> None:
             result = _article_from_entry(entry, item)
             if result is None:
                 continue
-            title, pages = result
+            title, pages, kind = result
             full_text = "\n\n".join(p["text"] for p in pages)
             doc = {
                 "source_type": "zim",
@@ -149,17 +153,23 @@ def ingest_all_zims(force: bool = False) -> None:
                 "zim_file": zim_path.name,
                 "article_path": entry.path,
                 "title": title,
-                "display_title": title,
-                "description": first_sentences(full_text),
                 "page_count": len(pages),
                 "pages": pages,
             }
+            if kind == "html":
+                # A real HTML article's own title is trustworthy; skip the
+                # LLM describe step so large ZIMs don't pay per-article cost.
+                doc["display_title"] = title
+                doc["description"] = first_sentences(full_text)
+            # PDF-derived entries keep only the generic ZIM filename as
+            # "title" — describe_all() will read the actual content and
+            # generate a real display_title + description from it.
             _save(config.EXTRACTED_DIR / f"zim-{zim_path.stem}-{n:05d}.json", doc)
             catalog.append({
                 "zim_file": zim_path.name,
                 "path": entry.path,
                 "title": title,
-                "description": doc["description"],
+                "description": doc.get("description", ""),
             })
             n += 1
             if n % 25 == 0:

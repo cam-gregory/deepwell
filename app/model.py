@@ -4,10 +4,16 @@ import httpx
 
 from app import config
 
-def _build_messages(user_prompt: str, system_prompt: str | None) -> list[dict]:
+def _build_messages(
+    user_prompt: str,
+    system_prompt: str | None,
+    history: list[dict] | None = None,
+) -> list[dict]:
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
+    if history:
+        messages.extend(history)
     messages.append({"role": "user", "content": user_prompt})
     return messages
 
@@ -20,10 +26,11 @@ def _build_payload(
     num_predict: int,
     temperature: float,
     keep_alive: str,
+    history: list[dict] | None = None,
 ) -> dict:
     return {
         "model": config.MODEL_NAME,
-        "messages": _build_messages(user_prompt, system_prompt),
+        "messages": _build_messages(user_prompt, system_prompt, history),
         "stream": stream,
         "keep_alive": keep_alive,
         "options": {
@@ -92,6 +99,7 @@ def generate_stream(
     num_predict: int = config.NUM_PREDICT,
     temperature: float = config.TEMPERATURE,
     keep_alive: str = config.KEEP_ALIVE,
+    history: list[dict] | None = None,
 ):
     """Streaming generation. Yields answer-content tokens as they arrive."""
     if not user_prompt.strip():
@@ -105,6 +113,7 @@ def generate_stream(
         num_predict=num_predict,
         temperature=temperature,
         keep_alive=keep_alive,
+        history=history,
     )
 
     # No read timeout: generation can pause between tokens.

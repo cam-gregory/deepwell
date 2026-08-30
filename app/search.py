@@ -8,18 +8,27 @@ from app import db
 # --- Load models, index, and faiss->chunk map once at import ---
 embed_model = SentenceTransformer(config.EMBEDDING_MODEL)
 
-index = faiss.read_index(str(config.VECTOR_DIR / "knowledge.index"))
-
 reranker = (
     CrossEncoder(config.RERANKER_MODEL)
     if config.RERANK_ENABLED
     else None
 )
 
-# faiss position -> chunk id (ordered by faiss_row). Built once; the pipeline
-# writes faiss_row during build_index, so this stays in sync with the index.
-with db.connect() as _conn:
-    _FAISS_TO_CHUNK = db.faiss_row_map(_conn)
+index = None
+# faiss position -> chunk id (ordered by faiss_row). The pipeline writes
+# faiss_row during build_index, so this stays in sync with the index.
+_FAISS_TO_CHUNK: list[int] = []
+
+def reload_index() -> None:
+    """Re-read the FAISS index + faiss->chunk map from disk.
+    Call after the corpus changes on disk (e.g. an ingest job rebuilds them)
+    so a running server picks up new documents without restarting."""
+    global index, _FAISS_TO_CHUNK
+    index = faiss.read_index(str(config.VECTOR_DIR / "knowledge.index"))
+    with db.connect() as conn:
+        _FAISS_TO_CHUNK = db.faiss_row_map(conn)
+
+reload_index()
 
 def _dense_candidates(query: str, k: int) -> list[int]:
     """Return chunk ids from FAISS vector search."""
@@ -87,10 +96,23 @@ def search(query: str, limit: int = config.FINAL_LIMIT) -> list[dict]:
         scores = reranker.predict(pairs)
         ranked = sorted(
             zip(scores, ordered), key=lambda x: x[0], reverse=True
-        )[:limit]
+        )
+        selected = []
+        per_doc: dict[str, int] = {}
+        for score, cid in ranked:
+            # ranked is sorted desc, so once we're below the floor nothing else passes.
+            if float(score) < config.RERANK_SCORE_MIN:
+                break
+            src = rows[cid].get("source_file")
+            if per_doc.get(src, 0) >= config.MAX_CHUNKS_PER_DOC:
+                continue
+            per_doc[src] = per_doc.get(src, 0) + 1
+            selected.append((score, cid))
+            if len(selected) >= limit:
+                break
         return [
             {"score": float(score), "chunk": db.chunk_to_search_dict(rows[cid])}
-            for score, cid in ranked
+            for score, cid in selected
         ]
 
     # Fallback: no reranker — return recall order, trimmed to limit.

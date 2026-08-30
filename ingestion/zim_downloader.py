@@ -2,6 +2,7 @@ from pathlib import Path
 import httpx
 
 from app import config
+from ingestion.http_client import resolve_proxy
 
 def download_zim(url: str, force: bool = False) -> Path:
     """Stream a .zim file from a Kiwix URL into ZIM_SOURCE_DIR.
@@ -21,7 +22,9 @@ def download_zim(url: str, force: bool = False) -> Path:
     print(f"Downloading {filename} ...")
 
     timeout = httpx.Timeout(connect=30.0, read=None, write=None, pool=None)
-    with httpx.stream("GET", url, follow_redirects=True, timeout=timeout) as r:
+    with httpx.stream(
+        "GET", url, follow_redirects=True, timeout=timeout, proxy=resolve_proxy(url)
+    ) as r:
         r.raise_for_status()
         total = int(r.headers.get("content-length", 0))
         done = 0

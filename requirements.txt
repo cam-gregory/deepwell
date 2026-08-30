@@ -29,8 +29,12 @@ pydantic==2.13.4
 pydantic_core==2.46.4
 Pygments==2.21.0
 pymupdf==1.28.2
+pip-system-certs==5.3
+PyPAC==0.19.0
+python-multipart==0.0.32
 PyYAML==6.0.3
 regex==2026.7.19
+requests==2.34.2
 rich==15.0.0
 safetensors==0.8.0
 scikit-learn==1.9.0

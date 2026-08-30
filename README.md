@@ -52,14 +52,20 @@ deepwell/
 │   ├── search.py          Hybrid retrieval (FAISS dense + FTS5) + cross-encoder rerank
 │   ├── answer.py          Prompt assembly + streaming answer orchestration
 │   ├── model.py           Ollama client (generate + generate_stream)
-│   └── static/
-│       ├── index.html     Ask UI (streaming answer, sources, timing)
-│       ├── library.html   Library UI (browse/filter/open documents)
-│       └── debug.html     Retrieval debug view (rerank inspection)
+│   ├── ingest.py          Background ingest job runner (upload → pipeline stages → NDJSON progress)
+│   └── static/            Built frontend output (generated, do not edit by hand)
+├── frontend/               React + TypeScript + Tailwind UI (source for app/static/)
+│   ├── src/
+│   │   ├── pages/          Ask.tsx, Library.tsx, Debug.tsx, Add.tsx
+│   │   ├── components/     Nav.tsx, Markdown.tsx (offline markdown renderer)
+│   │   └── api.ts          Fetch helpers for /ask, /search, /library/list, /ingest, etc.
+│   └── vite.config.ts      Builds to ../app/static with base path /static/
 ├── ingestion/
 │   ├── pdf_reader.py       PDF → extracted JSON (content-hash skip cache)
 │   ├── zim_downloader.py   Stream a .zim from a Kiwix URL into data/sources/zim/
 │   ├── zim_reader.py       ZIM → one extracted JSON per article/book
+│   ├── web_reader.py       Crawl a web article index page → one extracted JSON per linked article
+│   ├── http_client.py      PAC-aware proxy resolution for ZIM/web downloads (corporate VPNs)
 │   ├── metadata.py         LLM-generated display_title + description
 │   ├── chunker.py          Split documents into overlapping-safe text chunks
 │   ├── enricher.py         Add keywords / content_type / difficulty to chunks
@@ -69,6 +75,7 @@ deepwell/
 └── data/
     ├── sources/pdf/        Drop PDFs here
     ├── sources/zim/        Downloaded .zim files (+ .catalog.json, .manifest.json)
+    ├── sources/web/        Offline HTML snapshots of crawled web articles (served at /web/...)
     ├── extracted/          Per-document JSON (+ .manifest.json for PDF hashing)
     ├── chunks/             Chunked JSON
     ├── enriched/           Enriched chunk JSON
@@ -119,6 +126,22 @@ Notes on ZIMs:
 * The `.zim` stays on disk so articles can be read live in the browser via `/zim/…`.
 * Verify a download with its published `.sha256` before ingesting large files.
 
+### Web articles (crawled)
+
+Point the crawler at a listing/index page (e.g. `https://medlineplus.gov/ency/encyclopedia_A.htm`); it follows same-site links from that page, extracts each linked article's text, and saves a fully offline HTML snapshot for reading later — no browser round-trip to the source site required:
+
+```bash
+python -m ingestion.web_reader https://medlineplus.gov/ency/encyclopedia_A.htm "/ency/article/"
+```
+
+The second argument is an optional regex narrowing which links count as articles (matched against the absolute URL); omit it to follow every same-site link on the page. Notes:
+
+* Each article's extracted text is rendered into a clean, app-styled HTML page under `data/sources/web/` (filename derived deterministically from the URL) and served locally at `/web/<slug>.html` — the Library's "open" link points there, not at the live site, so reading an article needs no network access. A small attribution line links back to the original URL for reference only.
+* `source_file` stores the article's original URL (used for de-duplication and citation); the offline snapshot filename is derived from it on the fly, so no extra DB column is needed.
+* Already-crawled URLs are skipped on repeat runs (tracked in `data/extracted/.web_manifest.json`); pass `force=True` (or re-run via the `/add` UI, which always accepts new pages) to re-fetch.
+* Pages under ~200 characters of extracted text are treated as navigation/chrome, not articles, and skipped.
+* A short delay is added between article fetches to be polite to the source site; this is not a general-purpose crawler and does not follow pagination or robots.txt — point it at one listing page at a time.
+
 ## Running the Pipeline
 
 Always run from the project root so the `app` and `ingestion` packages both resolve.
@@ -127,13 +150,14 @@ Always run from the project root so the `app` and `ingestion` packages both reso
 python run_pipeline.py
 ```
 
-This runs: download ZIMs → extract PDFs → extract ZIMs → describe (titles/descriptions) → chunk → enrich → load into SQLite → build FAISS index.
+This runs: download ZIMs → crawl web article indexes → extract PDFs → extract ZIMs → describe (titles/descriptions) → chunk → enrich → load into SQLite → build FAISS index. Curated ZIM URLs and web indexes live in `ZIM_URLS` / `WEB_SOURCES` at the top of `run_pipeline.py`.
 
 To run a single stage:
 
 ```bash
 python -m ingestion.pdf_reader          # extract PDFs
 python -m ingestion.zim_reader          # extract ZIMs
+python -m ingestion.web_reader <url>    # crawl a web article index
 python -m ingestion.db_loader           # JSON → SQLite
 python -m ingestion.vector_index        # embed → FAISS + write faiss_row
 ```
@@ -141,6 +165,17 @@ python -m ingestion.vector_index        # embed → FAISS + write faiss_row
 Rule of thumb for the `-m` prefix: it mirrors the folder. Anything in `app/` runs as `python -m app.<name>`; anything in `ingestion/` runs as `python -m ingestion.<name>`.
 
 ## Running the App
+
+The UI is a React SPA (`frontend/`) that builds into `app/static/`, which FastAPI serves directly. Build it once (or after any frontend change):
+
+```bash
+cd frontend
+npm install   # first time only
+npm run build # outputs to ../app/static
+cd ..
+```
+
+Then start the backend as usual:
 
 ```bash
 uvicorn app.main:app --reload
@@ -152,20 +187,44 @@ Then open:
 * `http://127.0.0.1:8000/library` — Library
 * `http://127.0.0.1:8000/debug` — Retrieval debug view
 
+All three paths are served from the same built `index.html`; `react-router` handles routing client-side.
+
+### Frontend development
+
+For hot-reloading UI work, run the Vite dev server alongside the backend instead of rebuilding on every change:
+
+```bash
+# terminal 1
+uvicorn app.main:app --reload
+# terminal 2
+cd frontend && npm run dev
+```
+
+Open `http://localhost:5173` — Vite proxies `/ask`, `/search`, `/debug/search`, `/library/list`, `/pdf`, and `/zim` to the FastAPI backend on port 8000 (see `frontend/vite.config.ts`).
+
 ## API Endpoints
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `/` | GET | Serves the Ask UI (`index.html`) |
+| `/` | GET | Serves the Ask UI (React SPA `index.html`) |
 | `/health` | GET | Liveness check |
-| `/ask?q=&limit=` | GET | Streams an NDJSON answer: sources → tokens → timings → done |
+| `/ask` | POST | Conversation-aware; body `{messages:[{role,content}], limit}`. Streams an NDJSON answer: sources → tokens → timings → done |
 | `/search?q=&limit=` | GET | Raw retrieval results as JSON |
 | `/debug/search?q=&limit=` | GET | Per-candidate dense rank, FTS rank, and rerank score |
-| `/debug` | GET | HTML view of the reranker reordering candidates |
-| `/library` | GET | Library UI (`library.html`) |
+| `/debug` | GET | Debug UI: inspect rerank reordering of candidates |
+| `/library` | GET | Library UI (same SPA, client-side routed) |
 | `/library/list?q=&limit=&offset=` | GET | SQL-backed, paginated document list |
+| `/add` | GET | Add-to-library UI: drag-drop PDFs, paste source URLs (ZIM + web, routed by type), crawl web article indexes (same SPA) |
+| `/ingest/start` | POST | Multipart form (`files`, `urls`, `web_link_pattern`, `download_pdfs`); saves PDFs, routes each URL by type (`.zim` download vs. web crawl), starts a background ingest job, returns `{job_id}` |
+| `/ingest/preview` | POST | Multipart form (`urls`, `web_link_pattern`); estimates page count + disk size per URL (web crawl sampled; `.zim` via HEAD) before ingesting |
+| `/ingest/stream/{job_id}` | GET | NDJSON stream of ingest stage progress for a job |
 | `/pdf/{filename}` | GET | Serves a PDF inline (path-traversal guarded) |
+| `/web/{filename}` | GET | Serves a saved offline HTML snapshot of a crawled web article |
 | `/zim/{zim_file}/{article_path}` | GET | Serves a ZIM entry live from the archive |
+
+## Adding Documents from the UI
+
+The `/add` page lets you drag-and-drop PDF files, paste Kiwix `.zim` URLs, and paste web article index URLs (one per line each, plus an optional regex to filter which links on a web index page count as articles), then runs the full ingestion pipeline (crawl/extract → describe → chunk → enrich → load into SQLite → build FAISS index) in a background thread, streaming stage-by-stage progress to the page. When it finishes, the running server reloads its in-memory FAISS index/chunk map (`search.reload_index()`) so new content is searchable immediately — no restart needed. This is equivalent to running `python run_pipeline.py`, just triggered per-upload instead of over the whole `ZIM_URLS`/`WEB_SOURCES` lists.
 
 ## How Retrieval Works
 
@@ -214,6 +273,7 @@ The chunk count and the `faiss_row IS NOT NULL` count should match exactly — t
 * Library shows filenames instead of titles — the metadata step didn't run or the list route isn't reading `display_title`. Re-run `describe_all` / `db_loader`.
 * ZIM extracts one junk "article" — the reader matched only the viewer shell. Confirm content mimetypes inside the archive and ensure PDF entries are being read.
 * Slow first response — model load/warm-up. Raise `KEEP_ALIVE` or pre-warm; per-token speed is fine once loaded and fully on GPU.
+* ZIM/web ingest fails with `[Errno 8] nodename nor servname provided, or not known` — the OS resolver can't reach the public internet directly (common on a corporate VPN/Zscaler-managed machine that routes traffic through a local PAC-configured proxy, which is why a browser still works). `ingestion/http_client.py` auto-detects and uses the system's PAC proxy (via `pypac`) for ZIM/web fetches, so this should self-resolve; if it still fails, the PAC may specify TLS interception with a corporate root CA that Python's bundled `certifi` store doesn't trust (even though `curl`/the browser do, via the OS trust store) — `pip-system-certs` (already in `requirements.txt`) fixes that by making Python use the OS certificate store instead.
 
 ## Roadmap
 

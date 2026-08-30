@@ -3,10 +3,15 @@ from urllib.parse import quote
 
 from app import config
 from app import db
+from ingestion.web_reader import slugify_url
 
 def _open_url(doc: dict) -> str:
     if doc.get("source_type") == "zim":
         return f"/zim/{quote(doc['zim_file'])}/{quote(doc.get('article_path',''), safe='/')}"
+    if doc.get("source_type") == "web":
+        # Offline snapshot saved at crawl time; filename derived from the
+        # URL itself so no extra DB column/join-key change is needed.
+        return f"/web/{quote(slugify_url(doc['source_file']))}.html"
     return f"/pdf/{quote(doc['source_file'])}"
 
 def load_to_db() -> None:
