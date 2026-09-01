@@ -46,6 +46,10 @@ def first_sentences(text: str, max_chars: int = 220, max_sentences: int = 2) -> 
 _SHELL_PATHS = {"home", "index", "index.html", "search", "404.html"}
 _SHELL_MARKERS = ("No result for this search request", "Loading…")
 
+# Skip iFixit community/non-content namespaces. "User/…" entries are contributor
+# profile pages (a person's name + reputation/comments), not documentation.
+_SKIP_PATH_PREFIXES = ("User/",)
+
 def _pdf_to_pages(content: bytes) -> list[dict]:
     pages = []
     doc = fitz.open(stream=content, filetype="pdf")
@@ -100,6 +104,8 @@ def _article_from_entry(entry, item):
     path = entry.path
 
     if path in _SHELL_PATHS:
+        return None
+    if path.startswith(_SKIP_PATH_PREFIXES):
         return None
 
     if mimetype.startswith("application/pdf"):

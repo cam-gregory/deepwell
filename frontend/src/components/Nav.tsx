@@ -3,6 +3,7 @@ import { Link, useLocation } from "react-router-dom";
 const ROUTE_LOADERS = {
   "/": () => import("../pages/Ask"),
   "/library": () => import("../pages/Library"),
+  "/dashboard": () => import("../pages/Dashboard"),
   "/debug": () => import("../pages/Debug"),
   "/add": () => import("../pages/Add"),
 } as const;
@@ -10,6 +11,7 @@ const ROUTE_LOADERS = {
 const LINKS = [
   { to: "/", label: "Ask", variant: "primary" },
   { to: "/library", label: "Library", variant: "primary" },
+  { to: "/dashboard", label: "Dashboard", variant: "primary" },
   { to: "/add", label: "Add data", variant: "secondary" },
   { to: "/debug", label: "Debug", variant: "secondary" },
 ] as const;

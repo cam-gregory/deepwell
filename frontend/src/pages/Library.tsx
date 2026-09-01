@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Nav from "../components/Nav";
-import { fetchLibraryPage, type LibraryDoc } from "../api";
+import { fetchLibraryPage, fetchCategories, type LibraryDoc, type CategoryNode } from "../api";
 
 const PAGE = 200;
 
@@ -57,7 +57,14 @@ const DocCard = memo(function DocCard({
               {descriptionText}
             </div>
           )}
-          <div className="mt-1 text-xs text-slate-500">{metaBits}</div>
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
+            {metaBits}
+            {doc.subcategory && (
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-600">
+                {doc.subcategory}
+              </span>
+            )}
+          </div>
         </div>
       </div>
       <span
@@ -79,22 +86,31 @@ export default function Library() {
   const [error, setError] = useState("");
   const [selectedDoc, setSelectedDoc] = useState<LibraryDoc | null>(null);
   const [activeType, setActiveType] = useState<DocFilter>("all");
+  const [categoryTree, setCategoryTree] = useState<CategoryNode[]>([]);
+  const [activeCategory, setActiveCategory] = useState("");
+  const [activeSub, setActiveSub] = useState("");
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const load = useCallback(async (q: string, reset: boolean, currentOffset: number) => {
-    try {
-      const data = await fetchLibraryPage(q, PAGE, reset ? 0 : currentOffset);
-      setTotal(data.count);
-      setDocs((prev) => (reset ? data.documents : [...prev, ...data.documents]));
-      setOffset((reset ? 0 : currentOffset) + data.returned);
-      setError("");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }, []);
+  const load = useCallback(
+    async (q: string, reset: boolean, currentOffset: number, category: string, sub: string) => {
+      try {
+        const data = await fetchLibraryPage(q, PAGE, reset ? 0 : currentOffset, category, sub);
+        setTotal(data.count);
+        setDocs((prev) => (reset ? data.documents : [...prev, ...data.documents]));
+        setOffset((reset ? 0 : currentOffset) + data.returned);
+        setError("");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
-    load("", true, 0);
+    load("", true, 0, "", "");
+    fetchCategories()
+      .then(setCategoryTree)
+      .catch(() => setCategoryTree([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -109,10 +125,26 @@ export default function Library() {
     [docs, activeType],
   );
 
+  const subcategories = useMemo(
+    () => categoryTree.find((c) => c.category === activeCategory)?.subcategories ?? [],
+    [categoryTree, activeCategory],
+  );
+
   function handleFilterChange(value: string) {
     setQuery(value);
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => load(value.trim(), true, 0), 250);
+    debounceRef.current = setTimeout(() => load(value.trim(), true, 0, activeCategory, activeSub), 250);
+  }
+
+  function handleCategoryChange(value: string) {
+    setActiveCategory(value);
+    setActiveSub("");
+    load(query.trim(), true, 0, value, "");
+  }
+
+  function handleSubChange(value: string) {
+    setActiveSub(value);
+    load(query.trim(), true, 0, activeCategory, value);
   }
 
   const hasDetailPanel = selectedDoc !== null;
@@ -145,7 +177,7 @@ export default function Library() {
             onChange={(e) => handleFilterChange(e.target.value)}
           />
 
-          <div className="mb-4 flex flex-wrap gap-2">
+          <div className="mb-4 flex flex-wrap items-center gap-2">
             {[
               { value: "all", label: "All" },
               { value: "pdf", label: "PDF" },
@@ -166,6 +198,35 @@ export default function Library() {
                 {option.label}
               </button>
             ))}
+
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              <select
+                className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:border-slate-400"
+                value={activeCategory}
+                onChange={(e) => handleCategoryChange(e.target.value)}
+              >
+                <option value="">All categories</option>
+                {categoryTree.map((c) => (
+                  <option key={c.category} value={c.category}>
+                    {c.category} ({c.documents.toLocaleString()})
+                  </option>
+                ))}
+              </select>
+              {subcategories.length > 0 && (
+                <select
+                  className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 hover:border-slate-400"
+                  value={activeSub}
+                  onChange={(e) => handleSubChange(e.target.value)}
+                >
+                  <option value="">All subcategories</option>
+                  {subcategories.map((s) => (
+                    <option key={s.subcategory} value={s.subcategory}>
+                      {s.subcategory} ({s.documents.toLocaleString()})
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
           </div>
 
           {error && <div className="mt-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-700">{error}</div>}
@@ -195,7 +256,7 @@ export default function Library() {
             <div className="mt-4 text-center">
               <button
                 className="cursor-pointer rounded-lg border border-slate-300 bg-white px-5 py-2.5 hover:bg-slate-50"
-                onClick={() => load(query.trim(), false, offset)}
+                onClick={() => load(query.trim(), false, offset, activeCategory, activeSub)}
               >
                 Load more
               </button>

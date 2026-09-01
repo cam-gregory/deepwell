@@ -15,6 +15,8 @@ export default defineConfig({
             "/search": "http://localhost:8000",
             "/debug/search": "http://localhost:8000",
             "/library/list": "http://localhost:8000",
+            "/stats": "http://localhost:8000",
+            "/categories": "http://localhost:8000",
             "/pdf": "http://localhost:8000",
             "/zim": "http://localhost:8000",
         },

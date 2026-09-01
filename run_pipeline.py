@@ -6,6 +6,7 @@ from ingestion.metadata import describe_all
 from ingestion.chunker import chunk_all_documents
 from ingestion.enricher import enrich_all
 from ingestion.db_loader import load_to_db
+from ingestion.categorizer import categorize_all
 from ingestion.vector_index import build_index
 
 # Curated ZIMs to fetch before ingest. Add/remove Kiwix URLs here.
@@ -45,6 +46,9 @@ def run_pipeline():
 
     print("\n=== 4. Loading into SQLite ===")
     load_to_db()
+
+    print("\n=== 4b. Categorizing documents ===")
+    categorize_all()
 
     print("\n=== 5. Building vector index ===")
     build_index()

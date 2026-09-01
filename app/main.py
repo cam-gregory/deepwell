@@ -128,14 +128,23 @@ def add_page():
 @app.get("/library/list")
 def library_list(
     q: str = Query(""),
+    category: str = Query(""),
+    subcategory: str = Query(""),
     limit: int = Query(200, ge=1, le=2000),
     offset: int = Query(0, ge=0),
 ) -> dict:
     """PDFs (one card each) + ZIM articles (one card each) from the documents table."""
-    where, params = "", []
+    conditions, params = [], []
     if q:
-        where = "WHERE display_title LIKE ? OR description LIKE ?"
-        params = [f"%{q}%", f"%{q}%"]
+        conditions.append("(display_title LIKE ? OR description LIKE ?)")
+        params += [f"%{q}%", f"%{q}%"]
+    if category:
+        conditions.append("category = ?")
+        params.append(category)
+    if subcategory:
+        conditions.append("subcategory = ?")
+        params.append(subcategory)
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
     with db.connect() as conn:
         total = conn.execute(
@@ -143,7 +152,7 @@ def library_list(
         ).fetchone()["c"]
         rows = conn.execute(
             f"""SELECT source_type, source_file, display_title, description,
-                       page_count, open_url
+                       page_count, open_url, category, subcategory
                 FROM documents {where}
                 ORDER BY CASE source_type
                     WHEN 'pdf' THEN 0
@@ -165,6 +174,8 @@ def library_list(
             "size_bytes": None,
             "indexed": True,
             "source": r["source_file"],
+            "category": r["category"],
+            "subcategory": r["subcategory"],
         }
         for r in rows
     ]
@@ -176,6 +187,108 @@ def library_list(
         "limit": limit,
         "documents": docs,
     }
+
+@app.get("/categories")
+def categories() -> dict:
+    """The document taxonomy actually present in the corpus: top-level
+    categories, each with their subcategories and document counts."""
+    with db.connect() as conn:
+        rows = conn.execute(
+            """SELECT category, subcategory, COUNT(*) AS c
+               FROM documents
+               WHERE category IS NOT NULL
+               GROUP BY category, subcategory"""
+        ).fetchall()
+
+    tree: dict[str, dict] = {}
+    for r in rows:
+        node = tree.setdefault(r["category"], {"category": r["category"], "documents": 0, "subcategories": []})
+        node["documents"] += r["c"]
+        if r["subcategory"]:
+            node["subcategories"].append({"subcategory": r["subcategory"], "documents": r["c"]})
+
+    categories = sorted(tree.values(), key=lambda n: n["documents"], reverse=True)
+    for node in categories:
+        node["subcategories"].sort(key=lambda s: s["documents"], reverse=True)
+
+    return {"categories": categories}
+
+def _dir_size(path: Path) -> int:
+    """Total size in bytes of all files under path (0 if it doesn't exist)."""
+    if not path.exists():
+        return 0
+    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+
+# Human-friendly labels for the rule-based content_type buckets from the enricher.
+_CATEGORY_LABELS = {
+    "procedure": "Procedures & instructions",
+    "warning": "Warnings & cautions",
+    "definition": "Definitions",
+    "scientific_explanation": "Scientific explanations",
+    "general_information": "General information",
+}
+
+@app.get("/stats")
+def stats() -> dict:
+    """Corpus overview: document/chunk totals, source-type and information-category
+    breakdowns, and on-disk size of the underlying data."""
+    with db.connect() as conn:
+        doc_total = conn.execute("SELECT COUNT(*) AS c FROM documents").fetchone()["c"]
+        chunk_total = conn.execute("SELECT COUNT(*) AS c FROM chunks").fetchone()["c"]
+        page_total = conn.execute(
+            "SELECT COALESCE(SUM(page_count), 0) AS c FROM documents"
+        ).fetchone()["c"]
+        by_source = conn.execute(
+            "SELECT source_type, COUNT(*) AS c FROM documents "
+            "GROUP BY source_type ORDER BY c DESC"
+        ).fetchall()
+        by_topcat = conn.execute(
+            "SELECT category, COUNT(*) AS c FROM documents "
+            "WHERE category IS NOT NULL GROUP BY category ORDER BY c DESC"
+        ).fetchall()
+        by_category = conn.execute(
+            "SELECT content_type, COUNT(*) AS c FROM chunks "
+            "GROUP BY content_type ORDER BY c DESC"
+        ).fetchall()
+
+    pdf_bytes = _dir_size(config.PDF_SOURCE_DIR)
+    zim_bytes = _dir_size(config.ZIM_SOURCE_DIR)
+    web_bytes = _dir_size(config.WEB_SOURCE_DIR)
+    db_bytes = config.DB_PATH.stat().st_size if config.DB_PATH.exists() else 0
+    vector_bytes = _dir_size(config.VECTOR_DIR)
+
+    return {
+        "documents": doc_total,
+        "chunks": chunk_total,
+        "pages": page_total,
+        "by_source_type": [
+            {"type": r["source_type"], "documents": r["c"]} for r in by_source
+        ],
+        "by_top_category": [
+            {"category": r["category"], "documents": r["c"]} for r in by_topcat
+        ],
+        "by_category": [
+            {
+                "category": r["content_type"] or "uncategorized",
+                "label": _CATEGORY_LABELS.get(r["content_type"], "Uncategorized"),
+                "chunks": r["c"],
+            }
+            for r in by_category
+        ],
+        "size": {
+            "pdf_bytes": pdf_bytes,
+            "zim_bytes": zim_bytes,
+            "web_bytes": web_bytes,
+            "sources_bytes": pdf_bytes + zim_bytes + web_bytes,
+            "database_bytes": db_bytes,
+            "vector_bytes": vector_bytes,
+            "total_bytes": pdf_bytes + zim_bytes + web_bytes + db_bytes + vector_bytes,
+        },
+    }
+
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard_page():
+    return FileResponse(INDEX_HTML)
 
 @app.post("/ingest/start")
 async def ingest_start(

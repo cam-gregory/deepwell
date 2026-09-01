@@ -15,6 +15,7 @@ from ingestion.metadata import describe_all
 from ingestion.chunker import chunk_all_documents
 from ingestion.enricher import enrich_all
 from ingestion.db_loader import load_to_db
+from ingestion.categorizer import categorize_all
 from ingestion.vector_index import build_index
 
 # In-memory job registry: each job keeps its full event log + status, so a
@@ -32,6 +33,7 @@ _STAGES = [
     ("chunk", "Chunking documents", chunk_all_documents),
     ("enrich", "Enriching chunks", enrich_all),
     ("load_db", "Loading into SQLite", load_to_db),
+    ("categorize", "Categorizing documents", categorize_all),
     ("index", "Building vector index", build_index),
 ]
 

@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS documents (
     description   TEXT,
     page_count    INTEGER,
     open_url      TEXT,
+    category      TEXT,
+    subcategory   TEXT,
     UNIQUE(source_file, article_path)
 );
 
@@ -61,6 +63,14 @@ def init_db() -> None:
     config.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with connect() as conn:
         conn.executescript(SCHEMA)
+        _migrate(conn)
+
+def _migrate(conn) -> None:
+    """Add columns introduced after the first release to a pre-existing DB."""
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(documents)")}
+    for col in ("category", "subcategory"):
+        if col not in cols:
+            conn.execute(f"ALTER TABLE documents ADD COLUMN {col} TEXT")
 
 def reset_db() -> None:
     """Drop derived tables so a rebuild starts clean."""

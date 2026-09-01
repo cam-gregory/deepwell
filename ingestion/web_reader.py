@@ -102,6 +102,8 @@ def _extract_links(html: str, base_url: str, link_pattern: str | None) -> list[s
         absolute = urljoin(base_url, href)
         if urlparse(absolute).netloc != base_netloc or absolute == base_url:
             continue
+        if urlparse(absolute).path.lower().endswith(".pdf"):
+            continue  # PDFs are harvested by _extract_pdf_links, not crawled as articles
         if _is_wiki_infra_url(absolute):
             continue
         if pattern and not pattern.search(absolute):

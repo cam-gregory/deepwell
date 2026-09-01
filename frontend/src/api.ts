@@ -71,6 +71,8 @@ export interface LibraryDoc {
   size_bytes: number | null;
   indexed: boolean;
   source: string;
+  category: string | null;
+  subcategory: string | null;
 }
 
 export interface LibraryPage {
@@ -85,16 +87,61 @@ export async function fetchLibraryPage(
   q: string,
   limit: number,
   offset: number,
+  category = "",
+  subcategory = "",
 ): Promise<LibraryPage> {
-  const url = `/library/list?q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}`;
-  const r = await fetch(url);
+  const params = new URLSearchParams({ q, limit: String(limit), offset: String(offset) });
+  if (category) params.set("category", category);
+  if (subcategory) params.set("subcategory", subcategory);
+  const r = await fetch(`/library/list?${params.toString()}`);
   if (!r.ok) throw new Error(`Request failed: ${r.status}`);
   return r.json();
+}
+
+export interface CategorySubNode {
+  subcategory: string;
+  documents: number;
+}
+export interface CategoryNode {
+  category: string;
+  documents: number;
+  subcategories: CategorySubNode[];
+}
+
+export async function fetchCategories(): Promise<CategoryNode[]> {
+  const r = await fetch("/categories");
+  if (!r.ok) throw new Error(`Request failed: ${r.status}`);
+  const data = await r.json();
+  return data.categories as CategoryNode[];
 }
 
 export async function fetchDebugSearch(q: string, limit: number): Promise<unknown> {
   const url = `/debug/search?q=${encodeURIComponent(q)}&limit=${limit}`;
   const r = await fetch(url);
+  if (!r.ok) throw new Error(`Request failed: ${r.status}`);
+  return r.json();
+}
+
+export interface CorpusStats {
+  documents: number;
+  chunks: number;
+  pages: number;
+  by_source_type: { type: string; documents: number }[];
+  by_top_category: { category: string; documents: number }[];
+  by_category: { category: string; label: string; chunks: number }[];
+  size: {
+    pdf_bytes: number;
+    zim_bytes: number;
+    web_bytes: number;
+    sources_bytes: number;
+    database_bytes: number;
+    vector_bytes: number;
+    total_bytes: number;
+  };
+}
+
+export async function fetchStats(): Promise<CorpusStats> {
+  const r = await fetch("/stats");
   if (!r.ok) throw new Error(`Request failed: ${r.status}`);
   return r.json();
 }
