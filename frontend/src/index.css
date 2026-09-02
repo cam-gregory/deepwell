@@ -2,14 +2,38 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Self-hosted fonts (variable), bundled so the app keeps working fully offline. */
+@font-face {
+  font-family: "Fraunces";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("./fonts/fraunces.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Geist";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("./fonts/geist.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Geist Mono";
+  font-style: normal;
+  font-weight: 400 500;
+  font-display: swap;
+  src: url("./fonts/geist-mono.woff2") format("woff2");
+}
+
 :root {
-  font-family: "Inter", "Segoe UI", sans-serif;
-  color: #1f2937;
-  background: #f3f4f6;
+  font-family: "Geist", "Inter", "Segoe UI", system-ui, sans-serif;
+  color: #20201c;
+  background: #f4f1ea;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  font-variant-ligatures: common-ligatures;
 }
 
 html {
@@ -17,21 +41,93 @@ html {
 }
 
 body {
-  @apply m-0 min-h-screen bg-slate-100 text-slate-800;
-  background: #f3f4f6;
+  @apply m-0 min-h-screen bg-paper text-ink;
+  position: relative;
 }
 
-main,
-#root {
-  background: #f3f4f6;
+/* Subtle warm paper grain so surfaces never feel sterile/flat. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.5;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
 }
 
 #root {
+  position: relative;
+  z-index: 1;
   min-height: 100vh;
 }
 
 button,
 input,
-textarea {
+textarea,
+select {
   font: inherit;
+}
+
+/* Tabular figures for all data-heavy numeric UI. */
+.nums {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* Visible, on-brand keyboard focus ring (accessibility, not optional). */
+:where(a, button, input, textarea, select, [tabindex]):focus-visible {
+  outline: 2px solid theme("colors.accent.DEFAULT");
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Warm, quiet scrollbars. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #cfc7b6 transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #d5cdba;
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #c2b8a0;
+  background-clip: content-box;
+}
+
+::selection {
+  background: #0f5a58;
+  color: #fffdf8;
+}
+
+/* Skeleton shimmer for loading states. */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: #ece7dc;
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 253, 248, 0.65),
+    transparent
+  );
+  animation: skeleton-shimmer 1.5s infinite;
+}
+@keyframes skeleton-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
 }

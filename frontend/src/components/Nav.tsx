@@ -1,4 +1,5 @@
 import { Link, useLocation } from "react-router-dom";
+import { WellMark } from "./Icons";
 
 const ROUTE_LOADERS = {
   "/": () => import("../pages/Ask"),
@@ -25,18 +26,21 @@ export default function Nav() {
   };
 
   return (
-    <header className="sticky top-0 z-20 mb-8 border-b border-slate-200/80 bg-slate-100/90 backdrop-blur-sm">
+    <header className="sticky top-0 z-20 mb-10 border-b border-line/80 bg-paper/85 backdrop-blur-md">
       <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-4 px-6 py-4">
-        <div className="flex items-center gap-3">
-          <div className="flex flex-col">
-            <div className="text-xl font-semibold tracking-tight text-slate-900">Deepwell</div>
-            <div className="text-[11px] uppercase tracking-[0.12em] text-slate-500">
+        <Link to="/" className="group flex items-center gap-3 no-underline" onMouseEnter={() => prefetchRoute("/")}>
+          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-accent text-surface shadow-card transition-transform duration-300 ease-spring group-hover:-translate-y-0.5">
+            <WellMark size={18} />
+          </span>
+          <span className="flex flex-col leading-none">
+            <span className="font-display text-[22px] font-semibold tracking-[-0.01em] text-ink">Deepwell</span>
+            <span className="mt-1 text-[10px] uppercase tracking-[0.22em] text-ink-faint">
               Draw from a world of knowledge
-            </div>
-          </div>
-        </div>
+            </span>
+          </span>
+        </Link>
 
-        <nav className="flex flex-wrap items-center justify-end gap-3 text-sm">
+        <nav className="flex flex-wrap items-center justify-end gap-1.5 text-sm">
           {LINKS.map(({ to, label, variant }) => {
             const isActive = pathname === to;
             const isPrimary = variant === "primary";
@@ -45,24 +49,27 @@ export default function Nav() {
               <Link
                 key={to}
                 to={to}
+                aria-current={isActive ? "page" : undefined}
                 onMouseEnter={() => prefetchRoute(to)}
                 onFocus={() => prefetchRoute(to)}
                 className={[
-                  "inline-flex items-center rounded-full border px-3.5 py-2 transition-all no-underline",
+                  "relative inline-flex items-center rounded-lg px-3 py-2 font-medium no-underline transition-colors duration-200",
                   isPrimary
                     ? isActive
-                      ? "border-slate-900 bg-slate-900 text-white shadow-sm"
-                      : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50"
+                      ? "bg-ink text-surface"
+                      : "text-ink-soft hover:bg-ink/[0.06] hover:text-ink"
                     : isActive
-                      ? "border-amber-400 bg-amber-100 text-amber-900"
-                      : "border-dashed border-amber-200 bg-amber-50/70 text-amber-800 hover:border-amber-300 hover:bg-amber-100",
+                      ? "text-accent-ink"
+                      : "text-ink-faint hover:text-accent-ink",
                 ].join(" ")}
               >
                 {label}
                 {!isPrimary && (
-                  <span className="ml-2 rounded-full bg-amber-200/80 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-900">
-                    Admin
-                  </span>
+                  <span
+                    className="ml-1.5 h-1.5 w-1.5 rounded-full bg-data-gold/80"
+                    title="Admin tool"
+                    aria-label="Admin tool"
+                  />
                 )}
               </Link>
             );

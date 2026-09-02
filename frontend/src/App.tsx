@@ -9,7 +9,8 @@ const Add = lazy(() => import("./pages/Add"));
 
 function LoadingScreen() {
   return (
-    <div className="flex min-h-screen items-center justify-center text-sm text-gray-500">
+    <div className="flex min-h-screen items-center justify-center gap-2 text-sm text-ink-faint">
+      <span className="h-2 w-2 animate-pulse-soft rounded-full bg-accent" />
       Loading…
     </div>
   );

@@ -18,9 +18,9 @@ function renderInline(text: string, keyPrefix: string): ReactNode[] {
       nodes.push(
         <span
           key={key}
-          className="inline-block text-xs font-semibold bg-indigo-50 text-indigo-800 px-2 py-0.5 rounded-full"
+          className="mx-0.5 inline-flex items-center rounded-md bg-accent-soft px-1.5 py-0.5 text-xs font-semibold text-accent-ink nums align-baseline"
         >
-          Source {citeMatch[1]}
+          {citeMatch[1]}
         </span>,
       );
     } else {
@@ -62,8 +62,8 @@ export default function Markdown({ text }: { text: string }) {
       const Tag = level as "h2" | "h3";
       const cls =
         level === "h2"
-          ? "text-lg font-semibold mt-6 mb-2 pb-1.5 border-b border-gray-100"
-          : "text-[15px] font-semibold mt-4 mb-1.5 text-gray-700";
+          ? "font-display text-lg font-semibold tracking-[-0.01em] mt-6 mb-2 pb-1.5 border-b border-line text-ink"
+          : "text-[15px] font-semibold mt-4 mb-1.5 text-ink-soft";
       blocks.push(
         <Tag key={key} className={cls}>
           {renderInline(m[1], key)}
@@ -76,7 +76,7 @@ export default function Markdown({ text }: { text: string }) {
     if (m) {
       closeList();
       blocks.push(
-        <h2 key={key} className="text-lg font-semibold mt-6 mb-2 pb-1.5 border-b border-gray-100">
+        <h2 key={key} className="font-display text-lg font-semibold tracking-[-0.01em] mt-6 mb-2 pb-1.5 border-b border-line text-ink">
           {renderInline(m[1], key)}
         </h2>,
       );
@@ -92,8 +92,8 @@ export default function Markdown({ text }: { text: string }) {
           key={key}
           className={
             warn
-              ? "my-4 py-3 px-4 rounded-lg bg-red-50 border-l-4 border-red-600 text-red-900"
-              : "my-4 py-3 px-4 rounded-lg bg-gray-100 border-l-4 border-gray-400"
+              ? "my-4 py-3 px-4 rounded-lg bg-data-clay/10 border-l-4 border-data-clay text-data-clay"
+              : "my-4 py-3 px-4 rounded-lg bg-surface-sunk border-l-4 border-line-strong text-ink-soft"
           }
         >
           {renderInline(m[1], key)}
