@@ -40,6 +40,32 @@ def _build_payload(
         },
     }
 
+def _apply_cloud_options(payload: dict) -> None:
+    """Attach optional cloud tuning (thinking effort, output cap) when configured."""
+    if config.CLOUD_REASONING_EFFORT:
+        payload["reasoning_effort"] = config.CLOUD_REASONING_EFFORT
+    if config.CLOUD_MAX_OUTPUT_TOKENS:
+        payload["max_tokens"] = config.CLOUD_MAX_OUTPUT_TOKENS
+
+def _content_from_response(data: dict) -> str:
+    """Pull message content from an OpenAI-compatible response, with a
+    diagnostic error when it's missing (e.g. thinking models that return no
+    content, or a safety block)."""
+    choices = data.get("choices")
+    if not choices:
+        raise RuntimeError(f"No choices in cloud response: {json.dumps(data)[:600]}")
+    choice = choices[0]
+    message = choice.get("message") or {}
+    content = message.get("content")
+    if content is None:
+        finish = choice.get("finish_reason")
+        raise RuntimeError(
+            f"No message content (finish_reason={finish}). "
+            f"If using a thinking model, set DEEPWELL_CLOUD_REASONING=none or use "
+            f"gemini-2.5-flash-lite. Raw choice: {json.dumps(choice)[:600]}"
+        )
+    return content.strip()
+
 def generate(
     user_prompt: str,
     system_prompt: str | None = None,
@@ -115,6 +141,7 @@ def generate_cloud(
         "messages": _build_messages(user_prompt, system_prompt),
         "temperature": temperature,
     }
+    _apply_cloud_options(payload)
     headers = {"Authorization": f"Bearer {config.CLOUD_LLM_API_KEY}"}
 
     try:
@@ -130,14 +157,66 @@ def generate_cloud(
 
     try:
         data = response.json()
-        content = (data["choices"][0]["message"]["content"] or "").strip()
-    except (ValueError, KeyError, IndexError, TypeError) as exc:
-        raise RuntimeError(f"Unexpected cloud LLM response shape: {exc}") from exc
+    except ValueError as exc:
+        raise RuntimeError("Cloud LLM returned a non-JSON response") from exc
 
+    content = _content_from_response(data)
     if not content:
         raise RuntimeError("Cloud LLM returned an empty response")
 
     return content
+
+def generate_cloud_vision(
+    user_prompt: str,
+    images_b64: list[str],
+    system_prompt: str | None = None,
+    *,
+    mime: str = "image/png",
+    temperature: float = 0.0,
+    timeout: float = 180.0,
+) -> str:
+    """Multimodal one-shot generation via an OpenAI-compatible chat API.
+
+    Sends one or more base64 images alongside the prompt (used for math-PDF
+    OCR). Ingestion-only; same PAC-proxy routing as generate_cloud."""
+    if not config.CLOUD_LLM_API_KEY:
+        raise RuntimeError("DEEPWELL_CLOUD_API_KEY is not set")
+    if not images_b64:
+        raise ValueError("images_b64 must not be empty")
+
+    from ingestion.http_client import resolve_proxy
+
+    content: list[dict] = [{"type": "text", "text": user_prompt}]
+    for b64 in images_b64:
+        content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
+
+    messages: list[dict] = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": content})
+
+    url = f"{config.CLOUD_LLM_BASE_URL}/chat/completions"
+    payload = {"model": config.CLOUD_LLM_MODEL, "messages": messages, "temperature": temperature}
+    _apply_cloud_options(payload)
+    headers = {"Authorization": f"Bearer {config.CLOUD_LLM_API_KEY}"}
+
+    try:
+        with httpx.Client(proxy=resolve_proxy(url), timeout=timeout) as client:
+            response = client.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        raise RuntimeError(
+            f"Cloud vision LLM returned {exc.response.status_code}: {exc.response.text}"
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise RuntimeError(f"Cloud vision LLM request failed: {exc}") from exc
+
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise RuntimeError("Cloud vision LLM returned a non-JSON response") from exc
+
+    return _content_from_response(data)
 
 def generate_ingest(
     user_prompt: str,

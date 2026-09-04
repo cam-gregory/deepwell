@@ -68,4 +68,10 @@ CLOUD_LLM_BASE_URL = (
 CLOUD_LLM_MODEL = os.environ.get("DEEPWELL_CLOUD_MODEL", "gpt-4o-mini").strip()
 CLOUD_LLM_API_KEY = os.environ.get("DEEPWELL_CLOUD_API_KEY", "").strip()
 CLOUD_REQUEST_TIMEOUT = 60.0
+# Optional thinking control for models that support it (e.g. gemini-2.5-flash-lite):
+# "none" disables thinking so the model returns actual content instead of spending
+# the output budget on reasoning tokens. Empty = provider default.
+CLOUD_REASONING_EFFORT = os.environ.get("DEEPWELL_CLOUD_REASONING", "").strip()
+# Optional hard cap on output tokens (0 = provider default).
+CLOUD_MAX_OUTPUT_TOKENS = int(os.environ.get("DEEPWELL_CLOUD_MAX_TOKENS", "0") or "0")
 

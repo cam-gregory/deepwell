@@ -10,6 +10,7 @@ data/chunks/
 data/enriched/
 data/vectorstore/
 data/knowledge.db
+data/ocr/
 data/sources/zim/.catalog.json
 data/sources/zim/.manifest.json
 
