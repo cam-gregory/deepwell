@@ -51,3 +51,21 @@ DB_PATH = DATA_DIR / "knowledge.db"
 # locally. Intended for exposing a test deployment to trusted users.
 AUTH_PASSWORD = os.environ.get("DEEPWELL_PASSWORD", "").strip()
 
+# --- Optional hybrid cloud ingestion LLM ---
+# Deepwell always answers offline with the local Ollama model. The heavier,
+# one-time ingestion steps (metadata/description generation) can optionally use
+# a cloud LLM while the maintainer is online, then fall back to the local model
+# on any failure or when offline — so /add keeps working with no connectivity.
+# The query/answer path never uses these; embeddings stay local for consistency.
+#   DEEPWELL_INGEST_LLM=cloud            enable cloud ingestion (default: local)
+#   DEEPWELL_CLOUD_API_KEY=sk-...        key for the OpenAI-compatible endpoint
+#   DEEPWELL_CLOUD_BASE_URL=...          any OpenAI-compatible /v1 base URL
+#   DEEPWELL_CLOUD_MODEL=gpt-4o-mini     model name at that endpoint
+INGEST_LLM_PROVIDER = os.environ.get("DEEPWELL_INGEST_LLM", "local").strip().lower()
+CLOUD_LLM_BASE_URL = (
+    os.environ.get("DEEPWELL_CLOUD_BASE_URL", "https://api.openai.com/v1").strip().rstrip("/")
+)
+CLOUD_LLM_MODEL = os.environ.get("DEEPWELL_CLOUD_MODEL", "gpt-4o-mini").strip()
+CLOUD_LLM_API_KEY = os.environ.get("DEEPWELL_CLOUD_API_KEY", "").strip()
+CLOUD_REQUEST_TIMEOUT = 60.0
+

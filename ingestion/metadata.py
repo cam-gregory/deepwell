@@ -2,7 +2,7 @@ import json
 import re
 
 from app import config
-from app.model import generate
+from app.model import generate_ingest
 
 PROMPT_CHAR_LIMIT = 2000
 
@@ -48,7 +48,7 @@ DOCUMENT TEXT:
 """
 
     try:
-        raw = generate(prompt, SYSTEM)
+        raw = generate_ingest(prompt, SYSTEM)
         data = json.loads(_extract_json(raw))
         title = str(data.get("display_title") or "").strip() or fallback
         desc = str(data.get("description") or "").strip()

@@ -91,6 +91,71 @@ def generate(
 
     return content
 
+def generate_cloud(
+    user_prompt: str,
+    system_prompt: str | None = None,
+    *,
+    temperature: float = config.TEMPERATURE,
+    timeout: float = config.CLOUD_REQUEST_TIMEOUT,
+) -> str:
+    """One-shot generation via an OpenAI-compatible chat API (ingestion only).
+
+    Routed through the system PAC proxy so it works on corporate networks,
+    reusing the same resolver as the ZIM/web downloaders."""
+    if not user_prompt.strip():
+        raise ValueError("user_prompt must not be empty")
+    if not config.CLOUD_LLM_API_KEY:
+        raise RuntimeError("DEEPWELL_CLOUD_API_KEY is not set")
+
+    from ingestion.http_client import resolve_proxy
+
+    url = f"{config.CLOUD_LLM_BASE_URL}/chat/completions"
+    payload = {
+        "model": config.CLOUD_LLM_MODEL,
+        "messages": _build_messages(user_prompt, system_prompt),
+        "temperature": temperature,
+    }
+    headers = {"Authorization": f"Bearer {config.CLOUD_LLM_API_KEY}"}
+
+    try:
+        with httpx.Client(proxy=resolve_proxy(url), timeout=timeout) as client:
+            response = client.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        raise RuntimeError(
+            f"Cloud LLM returned {exc.response.status_code}: {exc.response.text}"
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise RuntimeError(f"Cloud LLM request failed: {exc}") from exc
+
+    try:
+        data = response.json()
+        content = (data["choices"][0]["message"]["content"] or "").strip()
+    except (ValueError, KeyError, IndexError, TypeError) as exc:
+        raise RuntimeError(f"Unexpected cloud LLM response shape: {exc}") from exc
+
+    if not content:
+        raise RuntimeError("Cloud LLM returned an empty response")
+
+    return content
+
+def generate_ingest(
+    user_prompt: str,
+    system_prompt: str | None = None,
+    *,
+    temperature: float = config.TEMPERATURE,
+) -> str:
+    """Ingestion-time generation. Uses the cloud LLM when configured
+    (DEEPWELL_INGEST_LLM=cloud) and reachable, otherwise the local Ollama
+    model, and always falls back to local on failure so ingestion keeps
+    working offline. The query/answer path never calls this."""
+    if config.INGEST_LLM_PROVIDER == "cloud":
+        try:
+            return generate_cloud(user_prompt, system_prompt, temperature=temperature)
+        except Exception as exc:
+            print(f"  cloud ingest LLM unavailable ({exc}); using local model")
+    return generate(user_prompt, system_prompt, temperature=temperature)
+
 def generate_stream(
     user_prompt: str,
     system_prompt: str | None = None,
