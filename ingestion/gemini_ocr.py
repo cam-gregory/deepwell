@@ -201,8 +201,12 @@ def ocr_pdf(pdf_path: Path, *, dpi: int = 170, start_page: int = 1, max_pages: i
 
     doc.close()
 
-    # Assemble from every cached page present, so resumed/partial runs still
-    # build the complete document in page order.
+    return _assemble_and_save(pdf_path, cache_dir, total)
+
+
+def _assemble_and_save(pdf_path: Path, cache_dir: Path, total: int) -> Path:
+    """Build the pipeline's extracted-JSON from every non-empty cached page, in
+    page order, and record the PDF in the manifest so pdf_reader skips it."""
     pages = []
     for cf in sorted(cache_dir.glob("[0-9]*.md")):
         try:
@@ -233,6 +237,39 @@ def ocr_pdf(pdf_path: Path, *, dpi: int = 170, start_page: int = 1, max_pages: i
     return out_path
 
 
+def fill_blocked_from_textlayer(pdf_path: Path) -> int:
+    """For pages left blank by the OCR (RECITATION-blocked), write PyMuPDF's
+    plain text layer instead — it has the prose (only the equations are lost,
+    which is exactly what those pages already lack). Re-assembles the JSON."""
+    cache_dir = OCR_DIR / pdf_path.stem
+    if not pdf_path.is_file() or not cache_dir.is_dir():
+        print(f"  {pdf_path.name}: nothing to fill (no OCR cache)")
+        return 0
+
+    doc = fitz.open(pdf_path)
+    total = doc.page_count
+    filled = 0
+    for cf in sorted(cache_dir.glob("[0-9]*.md")):
+        if cf.stat().st_size > 0:
+            continue  # only the blocked (empty) pages
+        try:
+            i = int(cf.stem) - 1
+        except ValueError:
+            continue
+        if not 0 <= i < total:
+            continue
+        text = doc[i].get_text("text").strip()
+        if text:
+            cf.write_text(text, encoding="utf-8")
+            filled += 1
+    doc.close()
+
+    print(f"  {pdf_path.stem}: filled {filled} blocked page(s) from text layer")
+    if filled:
+        _assemble_and_save(pdf_path, cache_dir, total)
+    return filled
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="OCR math/science PDFs with a cloud vision model.")
     ap.add_argument("pdfs", nargs="*", type=Path, help="PDF paths (in data/sources/pdf/).")
@@ -244,16 +281,24 @@ def main() -> None:
     ap.add_argument("--force", action="store_true", help="Re-OCR pages even if cached.")
     ap.add_argument("--retry-blocked", action="store_true",
                     help="Re-OCR only pages previously blank (RECITATION-blocked), at higher temperature.")
+    ap.add_argument("--fill-blocked-from-textlayer", dest="fill_blocked", action="store_true",
+                    help="Fill still-blocked (blank) pages with the PDF text layer (prose only, no equations).")
     args = ap.parse_args()
-
-    if not config.CLOUD_LLM_API_KEY:
-        raise SystemExit("DEEPWELL_CLOUD_API_KEY is not set — export your AI Studio key first.")
 
     targets = list(args.pdfs)
     if args.all_web:
         targets += sorted(config.PDF_SOURCE_DIR.glob("*_WEB.pdf"))
     if not targets:
         raise SystemExit("No PDFs given. Pass paths or use --all-web.")
+
+    # Text-layer fill is offline (no API); everything else needs the cloud key.
+    if args.fill_blocked:
+        total = sum(fill_blocked_from_textlayer(pdf) for pdf in targets)
+        print(f"Filled {total} blocked page(s) from text layer across {len(targets)} book(s).")
+        return
+
+    if not config.CLOUD_LLM_API_KEY:
+        raise SystemExit("DEEPWELL_CLOUD_API_KEY is not set — export your AI Studio key first.")
 
     for pdf in targets:
         ocr_pdf(pdf, dpi=args.dpi, start_page=args.start_page, max_pages=args.max_pages,
