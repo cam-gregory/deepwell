@@ -31,7 +31,7 @@ import hashlib
 import json
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, FIRST_COMPLETED, wait
 from pathlib import Path
 
 import fitz
@@ -148,34 +148,45 @@ def ocr_pdf(pdf_path: Path, *, dpi: int = 170, start_page: int = 1, max_pages: i
         (cache_dir / f"{page_no:04d}.md").write_text(text, encoding="utf-8")
 
     done = skipped = failed = 0
-    # fitz isn't thread-safe, so render sequentially in this thread and only fan
-    # out the network-bound OCR calls. Work in windows to bound memory/in-flight.
-    window = max(concurrency * 4, concurrency)
-    for base in range(0, len(todo), window):
-        batch = todo[base:base + window]
-        rendered = {i: _render_page_png(doc[i], dpi) for i in batch}
-        with ThreadPoolExecutor(max_workers=concurrency) as pool:
-            futs = {pool.submit(_ocr_page, rendered[i]): i for i in batch}
-            for fut in as_completed(futs):
-                page_no = futs[fut] + 1
+    # Pipeline: keep `concurrency` OCR calls in flight while rendering the next
+    # page just-in-time in this thread (fitz isn't thread-safe, but rendering is
+    # fast and overlaps with the many in-flight network calls). This avoids the
+    # serial "render the whole batch first" stall.
+    pages_iter = iter(todo)
+    inflight: dict = {}
+
+    def _submit_next(pool: ThreadPoolExecutor) -> bool:
+        try:
+            i = next(pages_iter)
+        except StopIteration:
+            return False
+        inflight[pool.submit(_ocr_page, _render_page_png(doc[i], dpi))] = i
+        return True
+
+    with ThreadPoolExecutor(max_workers=concurrency) as pool:
+        for _ in range(concurrency):
+            if not _submit_next(pool):
+                break
+        while inflight:
+            finished, _pending = wait(list(inflight), return_when=FIRST_COMPLETED)
+            for fut in finished:
+                page_no = inflight.pop(fut) + 1
                 try:
                     _write(page_no, fut.result())
                 except Exception as exc:
                     msg = str(exc)
                     if "No message content" in msg or "RECITATION" in msg or "content_filter" in msg:
-                        # A real content-filter block won't fix on retry: cache an
-                        # empty marker so we skip it and don't crash the book.
+                        # Real content-filter block: cache empty marker, skip.
                         skipped += 1
                         _write(page_no, "")
-                        print(f"  {pdf_path.stem}: page {page_no} SKIPPED blocked ({msg[:90]})")
                     else:
-                        # Transient/exhausted (e.g. proxy overload). Leave it
-                        # UNCACHED so a rerun retries it — never lose it silently.
+                        # Transient/exhausted: leave uncached so a rerun retries it.
                         failed += 1
-                        print(f"  {pdf_path.stem}: page {page_no} FAILED, will retry next run ({msg[:90]})")
                 done += 1
-        tail = "".join([f" ({skipped} blocked)" if skipped else "", f" ({failed} to-retry)" if failed else ""])
-        print(f"  {pdf_path.stem}: {done}/{len(todo)} done{tail}")
+                _submit_next(pool)
+                if done % 25 == 0 or not inflight:
+                    tail = "".join([f" ({skipped} blocked)" if skipped else "", f" ({failed} to-retry)" if failed else ""])
+                    print(f"  {pdf_path.stem}: {done}/{len(todo)} done{tail}", flush=True)
 
     doc.close()
 
