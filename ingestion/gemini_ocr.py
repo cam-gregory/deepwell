@@ -142,7 +142,7 @@ def ocr_pdf(pdf_path: Path, *, dpi: int = 170, start_page: int = 1, max_pages: i
     def _write(page_no: int, text: str) -> None:
         (cache_dir / f"{page_no:04d}.md").write_text(text, encoding="utf-8")
 
-    done = skipped = 0
+    done = skipped = failed = 0
     # fitz isn't thread-safe, so render sequentially in this thread and only fan
     # out the network-bound OCR calls. Work in windows to bound memory/in-flight.
     window = max(concurrency * 4, concurrency)
@@ -156,12 +156,21 @@ def ocr_pdf(pdf_path: Path, *, dpi: int = 170, start_page: int = 1, max_pages: i
                 try:
                     _write(page_no, fut.result())
                 except Exception as exc:
-                    # A single blocked page (e.g. RECITATION) must not kill the run.
-                    skipped += 1
-                    _write(page_no, "")
-                    print(f"  {pdf_path.stem}: page {page_no} SKIPPED ({str(exc)[:120]})")
+                    msg = str(exc)
+                    if "No message content" in msg or "RECITATION" in msg or "content_filter" in msg:
+                        # A real content-filter block won't fix on retry: cache an
+                        # empty marker so we skip it and don't crash the book.
+                        skipped += 1
+                        _write(page_no, "")
+                        print(f"  {pdf_path.stem}: page {page_no} SKIPPED blocked ({msg[:90]})")
+                    else:
+                        # Transient/exhausted (e.g. proxy overload). Leave it
+                        # UNCACHED so a rerun retries it — never lose it silently.
+                        failed += 1
+                        print(f"  {pdf_path.stem}: page {page_no} FAILED, will retry next run ({msg[:90]})")
                 done += 1
-        print(f"  {pdf_path.stem}: {done}/{len(todo)} done" + (f" ({skipped} skipped)" if skipped else ""))
+        tail = "".join([f" ({skipped} blocked)" if skipped else "", f" ({failed} to-retry)" if failed else ""])
+        print(f"  {pdf_path.stem}: {done}/{len(todo)} done{tail}")
 
     doc.close()
 
