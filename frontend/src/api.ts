@@ -83,16 +83,21 @@ export interface LibraryPage {
   documents: LibraryDoc[];
 }
 
+export type LibrarySort = "title" | "pages" | "type";
+
 export async function fetchLibraryPage(
   q: string,
   limit: number,
   offset: number,
   category = "",
   subcategory = "",
+  sort: LibrarySort = "title",
+  type = "",
 ): Promise<LibraryPage> {
-  const params = new URLSearchParams({ q, limit: String(limit), offset: String(offset) });
+  const params = new URLSearchParams({ q, limit: String(limit), offset: String(offset), sort });
   if (category) params.set("category", category);
   if (subcategory) params.set("subcategory", subcategory);
+  if (type) params.set("type", type);
   const r = await fetch(`/library/list?${params.toString()}`);
   if (!r.ok) throw new Error(`Request failed: ${r.status}`);
   return r.json();

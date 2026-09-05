@@ -130,6 +130,8 @@ def library_list(
     q: str = Query(""),
     category: str = Query(""),
     subcategory: str = Query(""),
+    type: str = Query(""),
+    sort: str = Query("title"),
     limit: int = Query(200, ge=1, le=2000),
     offset: int = Query(0, ge=0),
 ) -> dict:
@@ -144,7 +146,19 @@ def library_list(
     if subcategory:
         conditions.append("subcategory = ?")
         params.append(subcategory)
+    if type:
+        conditions.append("source_type = ?")
+        params.append(type)
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+    # Whitelisted sort clauses (never interpolate user input directly).
+    _sorts = {
+        "title": "display_title COLLATE NOCASE ASC",
+        "pages": "page_count IS NULL, page_count DESC, display_title COLLATE NOCASE",
+        "type": ("CASE source_type WHEN 'pdf' THEN 0 WHEN 'zim' THEN 1 "
+                 "WHEN 'web' THEN 2 ELSE 3 END, display_title COLLATE NOCASE"),
+    }
+    order_by = _sorts.get(sort, _sorts["title"])
 
     with db.connect() as conn:
         total = conn.execute(
@@ -154,12 +168,7 @@ def library_list(
             f"""SELECT source_type, source_file, display_title, description,
                        page_count, open_url, category, subcategory
                 FROM documents {where}
-                ORDER BY CASE source_type
-                    WHEN 'pdf' THEN 0
-                    WHEN 'zim' THEN 1
-                    WHEN 'web' THEN 2
-                    ELSE 3
-                END, display_title
+                ORDER BY {order_by}
                 LIMIT ? OFFSET ?""",
             params + [limit, offset],
         ).fetchall()
