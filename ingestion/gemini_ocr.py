@@ -139,6 +139,11 @@ def ocr_pdf(pdf_path: Path, *, dpi: int = 170, start_page: int = 1, max_pages: i
     print(f"OCR {pdf_path.name}: {len(todo)} of pages {start_idx + 1}-{end_idx} "
           f"(of {total}) @ {dpi} DPI, concurrency {concurrency} -> {cache_dir}")
 
+    # Warm the PAC proxy cache in this thread before fanning out (its JS engine
+    # is not thread-safe; resolving once here keeps workers off the cold path).
+    from ingestion.http_client import resolve_proxy
+    resolve_proxy(config.CLOUD_LLM_BASE_URL)
+
     def _write(page_no: int, text: str) -> None:
         (cache_dir / f"{page_no:04d}.md").write_text(text, encoding="utf-8")
 
