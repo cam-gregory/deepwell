@@ -74,13 +74,14 @@ TAXONOMY: dict[str, dict[str, list[str]]] = {
             "extruder", "filament", "scanner", "ender 3",
         ],
         "Home & Kitchen Appliances": [
-            "refrigerator", "freezer", "washer", "washing machine", "dryer",
-            "dishwasher", "microwave", "oven", "stove", "range", "whirlpool",
-            "magic chef", "frigidaire", "kenmore", "maytag", "haier",
-            "vacuum", "roomba", "dyson", "blender", "coffee maker", "toaster",
-            "air conditioner", "hvac", "dehumidifier", "space heater",
-            "water heater", "garbage disposal", "kettle", "mixer", "heater",
-            "fan",
+            "refrigerator", "freezer", "washing machine", "clothes dryer",
+            "dryer", "dishwasher", "microwave oven", "toaster oven",
+            "convection oven", "wall oven", "range hood", "kitchen range",
+            "gas stove", "wood stove", "whirlpool", "magic chef", "frigidaire",
+            "kenmore", "maytag", "haier", "vacuum cleaner", "roomba", "dyson",
+            "blender", "coffee maker", "air conditioner", "hvac",
+            "dehumidifier", "space heater", "water heater", "garbage disposal",
+            "electric kettle", "stand mixer", "ceiling fan", "exhaust fan",
         ],
         "Power Tools & Yard Equipment": [
             "drill", "impact driver", "saw", "sander", "grinder",
@@ -107,6 +108,20 @@ TAXONOMY: dict[str, dict[str, list[str]]] = {
             "nest", "thermostat", "doorbell", "smart lock", "ring doorbell",
             "security camera", "alexa", "amazon echo", "google home",
             "smart home", "smart plug", "smart bulb",
+        ],
+    },
+    "Science & Mathematics": {
+        "Mathematics": [
+            "calculus", "algebra", "trigonometry", "precalculus",
+        ],
+        "Physics & Astronomy": [
+            "physics", "astronomy", "astrophysics", "thermodynamics",
+        ],
+        "Chemistry": [
+            "chemistry", "organic chemistry", "biochemistry",
+        ],
+        "Biology & Life Sciences": [
+            "biology", "microbiology", "anatomy and physiology",
         ],
     },
     "Health & Medicine": {
@@ -266,6 +281,11 @@ def classify(title: str, description: str, keywords: str, source_type: str,
     best_score = 0
     best: tuple[str, str] | None = None
     for cat, sub, pattern in _COMPILED:
+        # Academic subjects apply only to the textbook PDFs; skipping them for
+        # zim/web keeps iFixit lab-device guides (e.g. "Chemistry Analyzer") in
+        # Device Repair instead of being stolen by the word "chemistry".
+        if cat == "Science & Mathematics" and source_type != "pdf":
+            continue
         score = len(pattern.findall(haystack))
         if pattern.search(title):
             score += 3
