@@ -62,6 +62,9 @@ BACKOFF_SECONDS = 10
 # A little randomness reduces Gemini's RECITATION content-filter blocks on
 # verbatim textbook text (greedy decoding trips it far more often).
 OCR_TEMPERATURE = 0.4
+# Hotter decoding for the --retry-blocked pass: paraphrases word choice enough
+# to slip past RECITATION on pages the first pass blocked.
+OCR_RETRY_TEMPERATURE = 0.9
 
 # Safety net: convert any leftover image markdown to a plain caption so no dead
 # external URLs (unreachable offline) end up in the corpus.
@@ -89,12 +92,12 @@ def _render_page_png(page: "fitz.Page", dpi: int) -> bytes:
     return pix.tobytes("png")
 
 
-def _ocr_page(png: bytes) -> str:
+def _ocr_page(png: bytes, temperature: float = OCR_TEMPERATURE) -> str:
     b64 = base64.b64encode(png).decode("ascii")
     last_exc: Exception | None = None
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
-            out = generate_cloud_vision(PROMPT, [b64], SYSTEM, temperature=OCR_TEMPERATURE)
+            out = generate_cloud_vision(PROMPT, [b64], SYSTEM, temperature=temperature)
             return _strip_image_links(out.strip())
         except Exception as exc:
             msg = str(exc)
@@ -123,7 +126,7 @@ def _update_manifest(pdf_path: Path) -> None:
     MANIFEST_PATH.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def ocr_pdf(pdf_path: Path, *, dpi: int = 170, start_page: int = 1, max_pages: int | None = None, force: bool = False, concurrency: int = 8) -> Path:
+def ocr_pdf(pdf_path: Path, *, dpi: int = 170, start_page: int = 1, max_pages: int | None = None, force: bool = False, concurrency: int = 8, retry_blocked: bool = False) -> Path:
     if not pdf_path.is_file():
         raise SystemExit(f"PDF not found: {pdf_path}")
 
@@ -134,10 +137,18 @@ def ocr_pdf(pdf_path: Path, *, dpi: int = 170, start_page: int = 1, max_pages: i
     total = doc.page_count
     start_idx = max(0, start_page - 1)
     end_idx = min(total, start_idx + max_pages) if max_pages else total
-    todo = [i for i in range(start_idx, end_idx)
-            if force or not (cache_dir / f"{i + 1:04d}.md").exists()]
+    if retry_blocked:
+        # Only re-do pages previously blocked (cached but empty), hotter to dodge RECITATION.
+        todo = [i for i in range(start_idx, end_idx)
+                if (cache_dir / f"{i + 1:04d}.md").exists()
+                and (cache_dir / f"{i + 1:04d}.md").stat().st_size == 0]
+    else:
+        todo = [i for i in range(start_idx, end_idx)
+                if force or not (cache_dir / f"{i + 1:04d}.md").exists()]
+    temperature = OCR_RETRY_TEMPERATURE if retry_blocked else OCR_TEMPERATURE
     print(f"OCR {pdf_path.name}: {len(todo)} of pages {start_idx + 1}-{end_idx} "
-          f"(of {total}) @ {dpi} DPI, concurrency {concurrency} -> {cache_dir}")
+          f"(of {total}) @ {dpi} DPI, concurrency {concurrency}"
+          f"{', retry-blocked' if retry_blocked else ''} -> {cache_dir}")
 
     # Warm the PAC proxy cache in this thread before fanning out (its JS engine
     # is not thread-safe; resolving once here keeps workers off the cold path).
@@ -160,7 +171,7 @@ def ocr_pdf(pdf_path: Path, *, dpi: int = 170, start_page: int = 1, max_pages: i
             i = next(pages_iter)
         except StopIteration:
             return False
-        inflight[pool.submit(_ocr_page, _render_page_png(doc[i], dpi))] = i
+        inflight[pool.submit(_ocr_page, _render_page_png(doc[i], dpi), temperature)] = i
         return True
 
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
@@ -231,6 +242,8 @@ def main() -> None:
     ap.add_argument("--max-pages", type=int, default=None, help="Only OCR N pages from --start-page.")
     ap.add_argument("--concurrency", type=int, default=8, help="Parallel OCR requests (default 8).")
     ap.add_argument("--force", action="store_true", help="Re-OCR pages even if cached.")
+    ap.add_argument("--retry-blocked", action="store_true",
+                    help="Re-OCR only pages previously blank (RECITATION-blocked), at higher temperature.")
     args = ap.parse_args()
 
     if not config.CLOUD_LLM_API_KEY:
@@ -244,7 +257,7 @@ def main() -> None:
 
     for pdf in targets:
         ocr_pdf(pdf, dpi=args.dpi, start_page=args.start_page, max_pages=args.max_pages,
-                force=args.force, concurrency=args.concurrency)
+                force=args.force, concurrency=args.concurrency, retry_blocked=args.retry_blocked)
 
 
 if __name__ == "__main__":
