@@ -43,7 +43,7 @@ def first_sentences(text: str, max_chars: int = 220, max_sentences: int = 2) -> 
     return " ".join(parts[:max_sentences]).strip()[:max_chars]
 
 # Skip the viewer shell / search UI pages that carry no real content.
-_SHELL_PATHS = {"home", "index", "index.html", "search", "404.html"}
+_SHELL_PATHS = {"home", "home.html", "index", "index.html", "search", "404.html"}
 _SHELL_MARKERS = ("No result for this search request", "Loading…")
 
 # Skip iFixit community/non-content namespaces. "User/…" entries are contributor
