@@ -78,6 +78,32 @@ def _strip_image_links(text: str) -> str:
     return _IMG_MD.sub(repl, text)
 
 
+_TITLE_SMALL = {"a", "an", "and", "or", "the", "of", "in", "on", "for", "to", "with", "vs"}
+_TITLE_UPPER = {"ap", "vr", "dna", "rna", "us", "uk", "ii", "iii", "iv"}
+
+
+def nice_title(stem: str) -> str:
+    """Human-readable title from a filename stem, e.g.
+    'calculus-volume-2_-_WEB' -> 'Calculus Volume 2'. Strips the OpenStax
+    '_-_WEB' build marker, normalizes separators, and title-cases while keeping
+    small words lowercase, acronyms uppercase, and edition markers like '2e'."""
+    s = re.sub(r"[_\-]+", " ", stem)
+    s = re.sub(r"\bweb\b", "", s, flags=re.IGNORECASE)  # OpenStax "web build" marker
+    words = re.sub(r"\s+", " ", s).strip().split(" ")
+    out = []
+    for i, w in enumerate(words):
+        lw = w.lower()
+        if re.fullmatch(r"\d+e", lw):        # edition marker, e.g. 2e
+            out.append(lw)
+        elif lw in _TITLE_UPPER:
+            out.append(w.upper())
+        elif i > 0 and lw in _TITLE_SMALL:
+            out.append(lw)
+        else:
+            out.append(w[:1].upper() + w[1:].lower() if w else w)
+    return " ".join(out)
+
+
 def _sha256(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as f:
@@ -224,6 +250,7 @@ def _assemble_and_save(pdf_path: Path, cache_dir: Path, total: int) -> Path:
         "source_type": "pdf",
         "source_file": pdf_path.name,
         "title": pdf_path.stem,
+        "display_title": nice_title(pdf_path.stem),
         "page_count": total,
         "pages": pages,
     }
