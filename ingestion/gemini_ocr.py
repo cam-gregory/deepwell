@@ -31,6 +31,7 @@ import hashlib
 import json
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import fitz
@@ -57,6 +58,10 @@ PROMPT = (
 # Retry a page a few times on transient/rate-limit errors before giving up.
 MAX_ATTEMPTS = 4
 BACKOFF_SECONDS = 10
+
+# A little randomness reduces Gemini's RECITATION content-filter blocks on
+# verbatim textbook text (greedy decoding trips it far more often).
+OCR_TEMPERATURE = 0.4
 
 # Safety net: convert any leftover image markdown to a plain caption so no dead
 # external URLs (unreachable offline) end up in the corpus.
@@ -89,11 +94,12 @@ def _ocr_page(png: bytes) -> str:
     last_exc: Exception | None = None
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
-            return _strip_image_links(generate_cloud_vision(PROMPT, [b64], SYSTEM).strip())
+            out = generate_cloud_vision(PROMPT, [b64], SYSTEM, temperature=OCR_TEMPERATURE)
+            return _strip_image_links(out.strip())
         except Exception as exc:
             msg = str(exc)
             # Structural problems (no content, bad shape) won't fix themselves —
-            # fail fast so the user can adjust the model/reasoning setting.
+            # fail fast so the caller can skip this page and move on.
             if "No message content" in msg or "No choices" in msg or "non-JSON" in msg:
                 raise
             last_exc = exc
@@ -117,7 +123,7 @@ def _update_manifest(pdf_path: Path) -> None:
     MANIFEST_PATH.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def ocr_pdf(pdf_path: Path, *, dpi: int = 170, start_page: int = 1, max_pages: int | None = None, force: bool = False) -> Path:
+def ocr_pdf(pdf_path: Path, *, dpi: int = 170, start_page: int = 1, max_pages: int | None = None, force: bool = False, concurrency: int = 8) -> Path:
     if not pdf_path.is_file():
         raise SystemExit(f"PDF not found: {pdf_path}")
 
@@ -128,17 +134,34 @@ def ocr_pdf(pdf_path: Path, *, dpi: int = 170, start_page: int = 1, max_pages: i
     total = doc.page_count
     start_idx = max(0, start_page - 1)
     end_idx = min(total, start_idx + max_pages) if max_pages else total
-    print(f"OCR {pdf_path.name}: pages {start_idx + 1}-{end_idx} of {total} @ {dpi} DPI -> {cache_dir}")
+    todo = [i for i in range(start_idx, end_idx)
+            if force or not (cache_dir / f"{i + 1:04d}.md").exists()]
+    print(f"OCR {pdf_path.name}: {len(todo)} of pages {start_idx + 1}-{end_idx} "
+          f"(of {total}) @ {dpi} DPI, concurrency {concurrency} -> {cache_dir}")
 
-    for i in range(start_idx, end_idx):
-        page_no = i + 1
-        cache_file = cache_dir / f"{page_no:04d}.md"
-        if cache_file.exists() and not force:
-            continue
-        text = _ocr_page(_render_page_png(doc[i], dpi))
-        cache_file.write_text(text, encoding="utf-8")
-        if page_no % 10 == 0 or page_no == end_idx:
-            print(f"  {pdf_path.stem}: {page_no}/{end_idx}")
+    def _write(page_no: int, text: str) -> None:
+        (cache_dir / f"{page_no:04d}.md").write_text(text, encoding="utf-8")
+
+    done = skipped = 0
+    # fitz isn't thread-safe, so render sequentially in this thread and only fan
+    # out the network-bound OCR calls. Work in windows to bound memory/in-flight.
+    window = max(concurrency * 4, concurrency)
+    for base in range(0, len(todo), window):
+        batch = todo[base:base + window]
+        rendered = {i: _render_page_png(doc[i], dpi) for i in batch}
+        with ThreadPoolExecutor(max_workers=concurrency) as pool:
+            futs = {pool.submit(_ocr_page, rendered[i]): i for i in batch}
+            for fut in as_completed(futs):
+                page_no = futs[fut] + 1
+                try:
+                    _write(page_no, fut.result())
+                except Exception as exc:
+                    # A single blocked page (e.g. RECITATION) must not kill the run.
+                    skipped += 1
+                    _write(page_no, "")
+                    print(f"  {pdf_path.stem}: page {page_no} SKIPPED ({str(exc)[:120]})")
+                done += 1
+        print(f"  {pdf_path.stem}: {done}/{len(todo)} done" + (f" ({skipped} skipped)" if skipped else ""))
 
     doc.close()
 
@@ -181,6 +204,7 @@ def main() -> None:
     ap.add_argument("--dpi", type=int, default=170, help="Render resolution (default 170).")
     ap.add_argument("--start-page", type=int, default=1, help="1-based page to start at (for spot-checks).")
     ap.add_argument("--max-pages", type=int, default=None, help="Only OCR N pages from --start-page.")
+    ap.add_argument("--concurrency", type=int, default=8, help="Parallel OCR requests (default 8).")
     ap.add_argument("--force", action="store_true", help="Re-OCR pages even if cached.")
     args = ap.parse_args()
 
@@ -194,7 +218,8 @@ def main() -> None:
         raise SystemExit("No PDFs given. Pass paths or use --all-web.")
 
     for pdf in targets:
-        ocr_pdf(pdf, dpi=args.dpi, start_page=args.start_page, max_pages=args.max_pages, force=args.force)
+        ocr_pdf(pdf, dpi=args.dpi, start_page=args.start_page, max_pages=args.max_pages,
+                force=args.force, concurrency=args.concurrency)
 
 
 if __name__ == "__main__":
