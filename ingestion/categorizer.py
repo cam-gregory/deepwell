@@ -231,6 +231,7 @@ _IFIXIT_GENERAL = ("Device Repair", "General Repair Guides")
 _IFIXIT_DEVICE = ("Device Repair", "Devices & Models")
 _IFIXIT_REFERENCE = ("Device Repair", "Reference & Tools")
 _WEB_MEDICAL = ("Health & Medicine", "Medical Reference & Anatomy")
+_ZIM_MEDICINE = ("Health & Medicine", "Medical Reference & Anatomy")
 _WEB_APPROPRIATE = ("Home, Garden & Self-Reliance", "Appropriate Technology")
 _SURVIVAL_OTHER = ("Emergency Preparedness & Survival", "Planning & Response")
 _OTHER_FALLBACK = ("Uncategorized", None)
@@ -256,6 +257,8 @@ def _fallback(source_type: str, article_path: str | None,
             return _IFIXIT_REFERENCE
         if "ifixit" in zf or ap.startswith(("Guide/", "Teardown/")):
             return _IFIXIT_GENERAL
+        if "medic" in zf:  # Wikipedia/Kiwix medicine collections are all health content
+            return _ZIM_MEDICINE
         return _OTHER_FALLBACK
     if source_type == "web":
         sf = (source_file or "").lower()
